@@ -26,7 +26,7 @@ EVAL_IDS_PATH = Path(__file__).resolve().parents[2] / "dataset" / "eval_ids.txt"
 # ── Types ─────────────────────────────────────────────────────────────────────
 
 
-class DocMeta(TypedDict):
+class DocumentMetadata(TypedDict):
     source: str
     doc_id: str
     content_hash: str
@@ -57,19 +57,23 @@ class SODatasetBuilder:
         df = pd.read_csv(self.data_path)
         log.info("Loaded %d rows", len(df))
 
-        filtered = df[df["Y"].isin(self.QUALITY_KEEP)]
+        quality_filtered_df = df[df["Y"].isin(self.QUALITY_KEEP)]
         log.info(
             "After quality filter: %d rows\n%s",
-            len(filtered),
-            filtered["Y"].value_counts().to_string(),
+            len(quality_filtered_df),
+            quality_filtered_df["Y"].value_counts().to_string(),
         )
 
-        hq = filtered[filtered["Y"] == "HQ"]
-        eval_df = hq.sample(n=self.EVAL_SAMPLE_N, random_state=self.EVAL_RANDOM_STATE)
-        eval_df["Id"].to_csv(self.eval_ids_path, index=False, header=False)
-        log.info("Saved %d eval IDs → %s", len(eval_df), self.eval_ids_path)
+        high_quality_df = quality_filtered_df[quality_filtered_df["Y"] == "HQ"]
+        eval_holdout_df = high_quality_df.sample(
+            n=self.EVAL_SAMPLE_N, random_state=self.EVAL_RANDOM_STATE
+        )
+        eval_holdout_df["Id"].to_csv(self.eval_ids_path, index=False, header=False)
+        log.info("Saved %d eval IDs → %s", len(eval_holdout_df), self.eval_ids_path)
 
-        train_df = filtered[~filtered["Id"].isin(eval_df["Id"])]
+        train_df = quality_filtered_df[
+            ~quality_filtered_df["Id"].isin(eval_holdout_df["Id"])
+        ]
         log.info("Train set: %d rows", len(train_df))
         return train_df
 
@@ -77,29 +81,34 @@ class SODatasetBuilder:
         log.info("Building documents...")
         docs: list[Document] = []
         for _, row in tqdm(df.iterrows(), total=len(df), desc="Parsing HTML"):
-            stripped_body = self._strip_html(str(row["Body"]))
-            content = f"{row['Title']}\n\n{stripped_body}"
-            meta: DocMeta = {
+            plain_text_body = self._strip_html(str(row["Body"]))
+            content = f"{row['Title']}\n\n{plain_text_body}"
+            doc_metadata: DocumentMetadata = {
                 "source": "stackoverflow",
                 "doc_id": str(row["Id"]),
                 "content_hash": self._content_hash(content),
                 "title": str(row["Title"]),
-                "body": stripped_body,
+                "body": plain_text_body,
                 "tags": str(row["Tags"]).split(),
                 "quality": str(row["Y"]),
                 "created_at": str(row["CreationDate"]),
             }
-            docs.append(Document(page_content=content, metadata=meta))
+            docs.append(Document(page_content=content, metadata=doc_metadata))
         log.info("Built %d documents", len(docs))
         return docs
 
     @staticmethod
     def _strip_html(html: str) -> str:
         soup = BeautifulSoup(html, "html.parser")
-        for code in soup.find_all("code"):
-            code.string = f"\n```\n{code.get_text()}\n```\n"
+        for code_block in soup.find_all("code"):
+            code_block.string = f"\n```\n{code_block.get_text()}\n```\n"
         return soup.get_text(separator="\n").strip()
 
     @staticmethod
     def _content_hash(text: str) -> str:
         return hashlib.sha256(text.encode()).hexdigest()
+
+
+# print ls
+
+print("he")

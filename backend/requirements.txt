@@ -38,7 +38,7 @@ tiktoken>=0.8.0                # token counting for context budgeting
 llmlingua>=0.2.0               # primary compressor; falls back to summary chain
 
 # ── Observability ─────────────────────────────────────────────────────────────
-langfuse>=2.0.0                # self-hosted; LangChain CallbackHandler
+langfuse>=3.0.0                # LangChain CallbackHandler: from langfuse.langchain import CallbackHandler
 
 # ── Evals ─────────────────────────────────────────────────────────────────────
 ragas>=0.1.21                  # context_precision, context_recall, answer_relevancy
@@ -51,7 +51,7 @@ lxml>=5.0.0                    # bs4 parser backend
 numpy>=1.26.0
 
 # ── HTTP / Async ──────────────────────────────────────────────────────────────
-httpx>=0.27.0                  # async HTTP (Ollama health checks, GitHub tool)
+httpx>=0.27.0                  # async HTTP (LLM API health checks, GitHub tool)
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 PyGithub>=2.3.0                # backend/tools/github_tool.py
