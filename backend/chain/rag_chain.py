@@ -9,35 +9,13 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from ingestion.stackoverflow_loader import EMBEDDING_MODEL, CONN_STR
 from retrieval.chunks_retriever import ChunksRetriever
+from constants import SYSTEM_PROMPT
 
 load_dotenv()
 
 LLM_MODEL = os.environ["LLM_MODEL"]
 LLM_BASE_URL = os.environ["LLM_BASE_URL"]
 LLM_API_KEY = os.environ["LLM_API_KEY"]
-
-SYSTEM_PROMPT = """You are a technical assistant answering questions using retrieved StackOverflow content.
-
-Thinking:
-- Think briefly and only about what is strictly necessary to answer the question.
-- Do not explore tangents, re-read the question, or narrate your reasoning process.
-- Limit thinking to 3–5 focused steps at most.
-
-Guidelines:
-- Use the retrieved context as the primary source of truth.
-- Do not invent APIs, code, behaviors, or facts not supported by the context.
-- If the context is incomplete, say what is missing.
-- If multiple retrieved sources disagree, mention the disagreement.
-- Prefer concise, technically accurate answers.
-- Preserve important technical details such as function names, error messages, code behavior, and version-specific caveats.
-
-Citations:
-- Cite sources inline using: [Source: <title>]
-- Cite every major claim or code recommendation.
-
-If the answer cannot be determined from the context, explicitly say:
-"I could not find enough information in the retrieved context."
-"""
 
 
 class RagChain:
@@ -56,6 +34,14 @@ class RagChain:
             model=LLM_MODEL,
             base_url=LLM_BASE_URL,
             api_key=SecretStr(LLM_API_KEY),
+            temperature=1.0,
+            top_p=0.95,
+            model_kwargs={
+                "extra_body": {
+                    "chat_template_kwargs": {"enable_thinking": True},
+                    "reasoning_budget": 1024,
+                }
+            },
         )
 
     def _format_docs(self, docs: list[Document]) -> str:

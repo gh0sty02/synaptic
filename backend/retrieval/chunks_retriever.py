@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, ClassVar
 import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector, register_vector_async
@@ -6,6 +6,15 @@ from pydantic import ConfigDict
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
+from dotenv import load_dotenv
+import os
+from sentence_transformers import CrossEncoder
+
+load_dotenv()
+
+RETRIEVAL_SCORE_CUTOFF = float(os.environ.get("RETRIEVAL_SCORE_CUTOFF", "0.35"))
+RETRIEVAL_TOP_K = int(os.environ.get("RETRIEVAL_TOP_K", "3"))
+_DISTANCE_CUTOFF = 1 - RETRIEVAL_SCORE_CUTOFF  # <=> returns distance, not similarity
 
 
 class ChunksRetriever(BaseRetriever):
@@ -32,8 +41,11 @@ class ChunksRetriever(BaseRetriever):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     embeddings: HuggingFaceEmbeddings
+    encoder: ClassVar[CrossEncoder] = CrossEncoder(
+        model_name_or_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
+    )
     conn_str: str
-    k: int = 5
+    k: int = 100
 
     def _pg_dsn(self) -> str:
         return self.conn_str.replace("postgresql+psycopg://", "postgresql://", 1)
@@ -49,12 +61,21 @@ class ChunksRetriever(BaseRetriever):
                 SELECT c.content, d.title
                 FROM chunks c
                 JOIN documents d ON c.document_id = d.id
+                WHERE (c.embedding <=> %s) < %s
                 ORDER BY c.embedding <=> %s
                 LIMIT %s
                 """,
-                (vec, self.k),
+                (vec, _DISTANCE_CUTOFF, vec, self.k),
             ).fetchall()
-        return [Document(page_content=r[0], metadata={"title": r[1]}) for r in rows]
+
+            print(rows)
+
+            re_ranked = self.encoder.predict([(query, row[0]) for row in rows])
+
+            scored = sorted(zip(re_ranked, rows), key=lambda x: x[0], reverse=True)
+
+            top = [r for _, r in scored[:RETRIEVAL_TOP_K]]
+        return [Document(page_content=r[0], metadata={"title": r[1]}) for r in top]
 
     async def _aget_relevant_documents(
         self, query: str, *, run_manager: Any
@@ -67,10 +88,18 @@ class ChunksRetriever(BaseRetriever):
                 SELECT c.content, d.title
                 FROM chunks c
                 JOIN documents d ON c.document_id = d.id
+                WHERE (c.embedding <=> %s) < %s
                 ORDER BY c.embedding <=> %s
                 LIMIT %s
                 """,
-                (vec, self.k),
+                (vec, _DISTANCE_CUTOFF, vec, self.k),
             )
             rows = await cur.fetchall()
-        return [Document(page_content=r[0], metadata={"title": r[1]}) for r in rows]
+
+            re_ranked = self.encoder.predict([(query, row[0]) for row in rows])
+
+            scored = sorted(zip(re_ranked, rows), key=lambda x: x[0], reverse=True)
+
+            top = [r for _, r in scored[:RETRIEVAL_TOP_K]]
+
+        return [Document(page_content=r[0], metadata={"title": r[1]}) for r in top]

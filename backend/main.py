@@ -11,6 +11,9 @@ import json
 from chain.rag_chain import RagChain
 from langfuse.langchain import CallbackHandler
 
+langfuse_handler = CallbackHandler()
+
+
 app = FastAPI(title="Synaptic")
 
 
@@ -61,7 +64,7 @@ async def chat_completions(request: ChatCompletionRequest):
         # Role announcement — required by OpenAI SDK before any content
         yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_at, 'model': request.model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
 
-        async for chunk in rag_chain.astream(query):
+        async for chunk in rag_chain.astream(query, config={"callbacks": [langfuse_handler]}):
             print(chunk)
             yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_at, 'model': request.model, 'choices': [{'index': 0, 'delta': {'content': chunk}, 'finish_reason': None}]})}\n\n"
 
