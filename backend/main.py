@@ -7,11 +7,15 @@ import time
 
 import uuid
 import json
+import os
+import logging
 
 from chain.rag_chain import RagChain
 from langfuse.langchain import CallbackHandler
 
 langfuse_handler = CallbackHandler()
+
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI(title="Synaptic")
@@ -28,10 +32,13 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = True
 
 
-def extract_query_from_messages(messages: list[ChatMessage]) -> str:
-    for msg in reversed(messages):
-        if msg.role == "user":
-            return msg.content
+def extract_query_from_messages(messages: list[ChatMessage]) -> tuple[str, str]:
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].role == "user":
+            memory_context = "\n".join(
+                f"{m.role}: {m.content}" for m in messages[:i]
+            )
+            return messages[i].content, memory_context
 
     from fastapi import HTTPException
 
@@ -56,23 +63,30 @@ def health():
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
-    query = extract_query_from_messages(request.messages)
+    query, memory_context = extract_query_from_messages(request.messages)
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created_at = int(time.time())
 
     async def generate():
-        # Role announcement — required by OpenAI SDK before any content
-        yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_at, 'model': request.model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
+        try:
+            # Role announcement — required by OpenAI SDK before any content
+            yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_at, 'model': request.model, 'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': ''}, 'finish_reason': None}]})}\n\n"
 
-        async for chunk in rag_chain.astream(query, config={"callbacks": [langfuse_handler]}):
-            print(chunk)
-            yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_at, 'model': request.model, 'choices': [{'index': 0, 'delta': {'content': chunk}, 'finish_reason': None}]})}\n\n"
+            async for chunk in rag_chain.astream({"question": query, "memory_context": memory_context}, config={"callbacks": [langfuse_handler]}):
+                answer_chunk = chunk.get("answer", "") if isinstance(chunk, dict) else chunk
+                if answer_chunk:
+                    yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_at, 'model': request.model, 'choices': [{'index': 0, 'delta': {'content': answer_chunk}, 'finish_reason': None}]})}\n\n"
 
-        # Stop chunk
-        yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_at, 'model': request.model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
+            # Stop chunk
+            yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_at, 'model': request.model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
 
-        # OpenAI SDK stop sentinel
-        yield "data: [DONE]\n\n"
+            # OpenAI SDK stop sentinel
+            yield "data: [DONE]\n\n"
+
+        except Exception as exc:
+            logger.critical("Unhandled error in stream — triggering restart", exc_info=True)
+            yield "data: [DONE]\n\n"
+            os._exit(1)
 
     return StreamingResponse(
         generate(),
