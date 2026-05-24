@@ -74,8 +74,14 @@ class ChunksRetriever(BaseRetriever):
 
             scored = sorted(zip(re_ranked, rows), key=lambda x: x[0], reverse=True)
 
-            top = [r for _, r in scored[:RETRIEVAL_TOP_K]]
-        return [Document(page_content=r[0], metadata={"title": r[1]}) for r in top]
+            top = [(score, r) for score, r in scored[:RETRIEVAL_TOP_K]]
+        return [
+            Document(
+                page_content=r[0],
+                metadata={"title": r[1], "relevance_score": float(score)},
+            )
+            for score, r in top
+        ]
 
     async def _aget_relevant_documents(
         self, query: str, *, run_manager: Any
@@ -100,6 +106,11 @@ class ChunksRetriever(BaseRetriever):
 
             scored = sorted(zip(re_ranked, rows), key=lambda x: x[0], reverse=True)
 
-            top = [r for _, r in scored[:RETRIEVAL_TOP_K]]
-
-        return [Document(page_content=r[0], metadata={"title": r[1]}) for r in top]
+            top = [(score, r) for score, r in scored[:RETRIEVAL_TOP_K]]
+        return [
+            Document(
+                page_content=r[0],
+                metadata={"title": r[1], "relevance_score": float(score)},
+            )
+            for score, r in top
+        ]
