@@ -4,6 +4,7 @@ from typing import Any
 
 class LongTermMemory:
     TOP_K = 3
+    DECAY_DAYS = 30.0
 
     def __init__(self, pool: asyncpg.Pool, embed_fn: Any):
 
@@ -12,7 +13,7 @@ class LongTermMemory:
 
     async def load(self, query: str) -> list[dict[str, Any]]:
         """
-        Embed the currenct query, cosine search session_summaries filtered by user_id, return top k most sementaically similar past sessins
+        Embed the current query, cosine search session_summaries, return top k most semantically similar past sessions
         """
 
         query_vec = await self._embed(query)
@@ -24,23 +25,37 @@ class LongTermMemory:
             rows = await conn.fetch(
                 """
                 SELECT session_id, summary,
-                    1 - (embedding <=> $1::vector) AS similarity
+                    1 - (embedding <=> $1::vector) AS cosine_similarity,
+                    EXTRACT(EPOCH FROM (now() - created_at)) / 86400.0 AS days_old
                 FROM memory_summaries
                 ORDER BY embedding <=> $1::vector
                 LIMIT $2
                 """,
                 vec_str,
-                self.TOP_K,
+                self.TOP_K * 3,
             )
 
-        return [
-            {
-                "session_id": r["session_id"],
-                "summary": r["summary"],
-                "similarity": r["similarity"],
-            }
-            for r in rows
-        ]
+        results = []
+        for r in rows:
+            days_old = float(r["days_old"])
+            decay = min(1.0, max(0.0, 1.0 - days_old / self.DECAY_DAYS))
+            results.append(
+                {
+                    "session_id": r["session_id"],
+                    "summary": r["summary"],
+                    "similarity": float(r["cosine_similarity"]) * decay,
+                }
+            )
+
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[: self.TOP_K]
+
+    async def delete_by_session(self, session_id: str) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM memory_summaries WHERE session_id = $1",
+                session_id,
+            )
 
     async def save_summary(
         self, session_id: str, summary: str, turn_count: int

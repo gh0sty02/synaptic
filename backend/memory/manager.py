@@ -1,6 +1,5 @@
 from .short_term import ShortTermMemory
 from .long_term import LongTermMemory
-from langchain_core.messages import HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 import asyncio
 
@@ -10,6 +9,8 @@ class MemoryManager:
     Single entry point for memory operations
     Instanate once at app startup and inject wherever needed
     """
+
+    MIN_TURNS_TO_SUMMARISE = 5
 
     def __init__(
         self, short_term: ShortTermMemory, long_term: LongTermMemory, llm: ChatOpenAI
@@ -32,12 +33,21 @@ class MemoryManager:
         await self.stm.append(session_id, "human", human_msg)
         await self.stm.append(session_id, "ai", ai_msg)
 
+    async def delete_session(self, session_id: str) -> None:
+        await asyncio.gather(
+            self.stm.delete(session_id),
+            self.ltm.delete_by_session(session_id),
+        )
+
     async def archive_session(self, session_id: str) -> None:
         turns = await self.stm.get_all_for_archival(session_id)
         if not turns:
             return
 
         turn_count = len(turns) // 2
+        if turn_count < self.MIN_TURNS_TO_SUMMARISE:
+            await self.stm.delete(session_id)
+            return
 
         history_text = "\n".join(f"{t['role'].upper()}: {t['content']}" for t in turns)
 
