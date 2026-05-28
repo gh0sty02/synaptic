@@ -6,10 +6,11 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from ingestion.stackoverflow_loader import EMBEDDING_MODEL, CONN_STR
 from retrieval.chunks_retriever import ChunksRetriever
 from constants import SYSTEM_PROMPT
+from operator import itemgetter
 
 load_dotenv()
 
@@ -19,9 +20,9 @@ LLM_API_KEY = os.environ["LLM_API_KEY"]
 
 
 class RagChain:
-    def __init__(self) -> None:
+    def __init__(self, embeddings: HuggingFaceEmbeddings) -> None:
         self.llm = self._create_llm()
-        self.embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+        self.embeddings = embeddings
         self.retriever = ChunksRetriever(
             embeddings=self.embeddings,
             conn_str=CONN_STR,
@@ -36,12 +37,7 @@ class RagChain:
             api_key=SecretStr(LLM_API_KEY),
             temperature=1.0,
             top_p=0.95,
-            model_kwargs={
-                "extra_body": {
-                    "chat_template_kwargs": {"enable_thinking": True},
-                    "reasoning_budget": 1024,
-                }
-            },
+            extra_body={"chat_template_kwargs": {"enable_thinking": True}, "reasoning_budget": 1024},
         )
 
     def _format_docs(self, docs: list[Document]) -> str:
@@ -54,17 +50,24 @@ class RagChain:
         return ChatPromptTemplate.from_messages(
             [
                 ("system", SYSTEM_PROMPT),
-                ("human", "{question}\n\nContext:\n{context}"),
+                (
+                    "human",
+                    "Previous Conversation:\n{memory_context}\n\nCurrent Question: {question}\n\nContext:\n{context}",
+                ),
             ]
         )
 
     def build(self):
         return (
             {
-                "context": self.retriever | self._format_docs,
-                "question": RunnablePassthrough(),
+                "source_documents": itemgetter("question") | self.retriever,
+                "question": itemgetter("question"),
+                "memory_context": itemgetter("memory_context"),
             }
-            | self.prompt
-            | self.llm
-            | StrOutputParser()
+            | RunnablePassthrough.assign(
+                context=lambda x: self._format_docs(x["source_documents"])
+            )
+            | RunnablePassthrough.assign(
+                answer=self.prompt | self.llm | StrOutputParser()
+            )
         )
