@@ -1,4 +1,4 @@
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional
 import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector, register_vector_async
@@ -41,9 +41,13 @@ class ChunksRetriever(BaseRetriever):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     embeddings: HuggingFaceEmbeddings
-    encoder: ClassVar[CrossEncoder] = CrossEncoder(
-        model_name_or_path="cross-encoder/ms-marco-MiniLM-L-6-v2"
-    )
+    _encoder: ClassVar[Optional[CrossEncoder]] = None
+
+    @classmethod
+    def _get_encoder(cls) -> CrossEncoder:
+        if cls._encoder is None:
+            cls._encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+        return cls._encoder
     conn_str: str
     k: int = 100
 
@@ -70,7 +74,7 @@ class ChunksRetriever(BaseRetriever):
 
             print(rows)
 
-            re_ranked = self.encoder.predict([(query, row[0]) for row in rows])
+            re_ranked = self._get_encoder().predict([(query, row[0]) for row in rows])
 
             scored = sorted(zip(re_ranked, rows), key=lambda x: x[0], reverse=True)
 
@@ -102,7 +106,7 @@ class ChunksRetriever(BaseRetriever):
             )
             rows = await cur.fetchall()
 
-            re_ranked = self.encoder.predict([(query, row[0]) for row in rows])
+            re_ranked = self._get_encoder().predict([(query, row[0]) for row in rows])
 
             scored = sorted(zip(re_ranked, rows), key=lambda x: x[0], reverse=True)
 
