@@ -2,7 +2,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, SecretStr
+from llm import utility_llm
+from pydantic import BaseModel
 from typing import Literal, Optional
 import time
 import uuid
@@ -11,7 +12,6 @@ import os
 import asyncio
 import logging
 import re
-
 from ingestion.stackoverflow_loader import IngestionPipeline
 
 import redis.asyncio as aioredis
@@ -107,16 +107,8 @@ async def lifespan(application: FastAPI):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _embeddings.embed_query, text)
 
-    llm = ChatOpenAI(
-        model=LLM_MODEL,
-        base_url=LLM_BASE_URL,
-        api_key=SecretStr(LLM_API_KEY),
-        temperature=1.0,
-        top_p=0.95,
-    )
-
     manager = MemoryManager(
-        ShortTermMemory(redis_client), LongTermMemory(db_pool, embed_fn), llm
+        ShortTermMemory(redis_client), LongTermMemory(db_pool, embed_fn), utility_llm
     )
     orch_module.memory_manager = manager
     mem_module.memory_manager = manager
