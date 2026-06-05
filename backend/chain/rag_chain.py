@@ -37,7 +37,6 @@ class RagChain:
             api_key=SecretStr(LLM_API_KEY),
             temperature=1.0,
             top_p=0.95,
-            extra_body={"chat_template_kwargs": {"enable_thinking": True}, "reasoning_budget": 1024},
         )
 
     def _format_docs(self, docs: list[Document]) -> str:
@@ -58,16 +57,23 @@ class RagChain:
         )
 
     def build(self):
-        return (
-            {
-                "source_documents": itemgetter("question") | self.retriever,
-                "question": itemgetter("question"),
-                "memory_context": itemgetter("memory_context"),
-            }
-            | RunnablePassthrough.assign(
-                context=lambda x: self._format_docs(x["source_documents"])
-            )
-            | RunnablePassthrough.assign(
-                answer=self.prompt | self.llm | StrOutputParser()
-            )
-        )
+        _NO_CONTEXT_REPLY = "I couldn't find relevant information for your question."
+        _llm_chain = self.prompt | self.llm | StrOutputParser()
+
+        async def _answer(retrieved: dict) -> dict:
+            docs = retrieved["source_documents"]
+            if not docs:
+                return {**retrieved, "context": "", "answer": _NO_CONTEXT_REPLY}
+            context = self._format_docs(docs)
+            answer = await _llm_chain.ainvoke({
+                "question": retrieved["question"],
+                "memory_context": retrieved["memory_context"],
+                "context": context,
+            })
+            return {**retrieved, "context": context, "answer": answer}
+
+        return {
+            "source_documents": itemgetter("question") | self.retriever,
+            "question": itemgetter("question"),
+            "memory_context": itemgetter("memory_context"),
+        } | RunnableLambda(_answer)

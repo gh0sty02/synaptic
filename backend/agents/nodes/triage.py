@@ -7,6 +7,7 @@ import re
 import logging
 from dotenv import load_dotenv
 from agents.graph import SynapticState
+from langfuse import observe
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +89,11 @@ class Triage:
             api_key=SecretStr(LLM_API_KEY),
             temperature=1.0,
             top_p=0.95,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
 
-    async def run(self, query: str) -> TriageOutput:
+    async def run(self, query: str, config: dict[str, Any]) -> TriageOutput:
         messages = [SystemMessage(content=TRIAGE_PROMPT), HumanMessage(content=query)]
-        response = await self.llm.ainvoke(messages)
+        response = await self.llm.ainvoke(messages, config=config)
         raw = response.content
         logger.debug("Triage raw output: %r", raw)
         clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
@@ -103,8 +103,10 @@ class Triage:
 triage_agent = Triage()
 
 
+@observe(name="triage_node")
 async def triage_node(state: SynapticState):
-    result = await triage_agent.run(state["query"])
+    callbacks = state.get("callbacks", [])
+    result = await triage_agent.run(state["query"], config={"callbacks": callbacks})
     return {
         "intent": result.intent,
         "metadata_filters": result.metadata_filters,

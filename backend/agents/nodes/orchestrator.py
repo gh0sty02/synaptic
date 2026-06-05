@@ -10,6 +10,7 @@ from agents.graph import SynapticState
 from memory.manager import MemoryManager
 from .rag_agent import retriever, format_memory, extract_citations
 from constants import BEHAVIORAL_GUARDRAILS
+from langfuse import observe
 
 load_dotenv()
 
@@ -49,7 +50,6 @@ class Orchestrator:
             api_key=SecretStr(LLM_API_KEY),
             temperature=1.0,
             top_p=0.95,
-            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
 
     async def merge(
@@ -58,6 +58,7 @@ class Orchestrator:
         docs_context: str,
         short_term: str,
         long_term: str,
+        callbacks: list = None,
     ) -> str:
         context = f"Retrieved documents:\n{docs_context}"
         if short_term:
@@ -65,16 +66,20 @@ class Orchestrator:
         if long_term:
             context += f"\n\nOlder session summaries:\n{long_term}"
 
-        response = await self.llm.ainvoke([
-            SystemMessage(content=ORCHESTRATOR_PROMPT),
-            HumanMessage(content=f"{context}\n\nUser question: {query}"),
-        ])
+        response = await self.llm.ainvoke(
+            [
+                SystemMessage(content=ORCHESTRATOR_PROMPT),
+                HumanMessage(content=f"{context}\n\nUser question: {query}"),
+            ],
+            config={"callbacks": callbacks},
+        )
         return response.content
 
 
 _orchestrator = Orchestrator()
 
 
+@observe(name="orchestrator_node")
 async def orchestrator_node(state: SynapticState) -> dict[str, Any]:
     """
     For multi-intent queries: loads memory and retrieves chunks in parallel,
@@ -90,12 +95,14 @@ async def orchestrator_node(state: SynapticState) -> dict[str, Any]:
     short_term = format_memory(memory_result.get("short_term_memory", []))
     long_term = _format_long_term(memory_result.get("long_term_memory", []))
     docs_context = _format_docs(docs)
+    callbacks = state.get("callbacks", [])
 
     answer = await _orchestrator.merge(
         query=state["query"],
         docs_context=docs_context,
         short_term=short_term,
         long_term=long_term,
+        callbacks=callbacks,
     )
 
     return {
