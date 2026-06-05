@@ -1,21 +1,13 @@
-from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel
 from langchain_core.messages import SystemMessage, HumanMessage
 from typing import Any
-import os
 import re
 import logging
-from dotenv import load_dotenv
 from agents.graph import SynapticState
 from langfuse import observe
+from llm import utility_llm
 
 logger = logging.getLogger(__name__)
-
-load_dotenv()
-
-LLM_MODEL = os.environ["LLM_MODEL"]
-LLM_BASE_URL = os.environ["LLM_BASE_URL"]
-LLM_API_KEY = os.environ["LLM_API_KEY"]
 
 
 TRIAGE_PROMPT = """
@@ -78,22 +70,9 @@ class TriageOutput(BaseModel):
 
 
 class Triage:
-
-    def __init__(self):
-        self.llm = self._create_llm()
-
-    def _create_llm(self) -> ChatOpenAI:
-        return ChatOpenAI(
-            model=LLM_MODEL,
-            base_url=LLM_BASE_URL,
-            api_key=SecretStr(LLM_API_KEY),
-            temperature=1.0,
-            top_p=0.95,
-        )
-
     async def run(self, query: str, config: dict[str, Any]) -> TriageOutput:
         messages = [SystemMessage(content=TRIAGE_PROMPT), HumanMessage(content=query)]
-        response = await self.llm.ainvoke(messages, config=config)
+        response = await utility_llm.ainvoke(messages, config=config)
         raw = response.content
         logger.debug("Triage raw output: %r", raw)
         clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
