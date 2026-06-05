@@ -1,22 +1,13 @@
 import asyncio
 from typing import Any, Optional
-from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
-from pydantic import SecretStr
-import os
-from dotenv import load_dotenv
+from llm import utility_llm
 from agents.graph import SynapticState
 from memory.manager import MemoryManager
 from .rag_agent import retriever, format_memory, extract_citations
 from constants import BEHAVIORAL_GUARDRAILS
 from langfuse import observe
-
-load_dotenv()
-
-LLM_MODEL = os.environ["LLM_MODEL"]
-LLM_BASE_URL = os.environ["LLM_BASE_URL"]
-LLM_API_KEY = os.environ["LLM_API_KEY"]
 
 ORCHESTRATOR_PROMPT = """
 You are a synthesis assistant. The user's query requires both factual knowledge and conversation history.
@@ -43,22 +34,13 @@ def _format_long_term(long_term: list[dict[str, Any]]) -> str:
 
 
 class Orchestrator:
-    def __init__(self):
-        self.llm = ChatOpenAI(
-            model=LLM_MODEL,
-            base_url=LLM_BASE_URL,
-            api_key=SecretStr(LLM_API_KEY),
-            temperature=1.0,
-            top_p=0.95,
-        )
-
     async def merge(
         self,
         query: str,
         docs_context: str,
         short_term: str,
         long_term: str,
-        callbacks: list = None,
+        callbacks: list | None = None,
     ) -> str:
         context = f"Retrieved documents:\n{docs_context}"
         if short_term:
@@ -66,7 +48,7 @@ class Orchestrator:
         if long_term:
             context += f"\n\nOlder session summaries:\n{long_term}"
 
-        response = await self.llm.ainvoke(
+        response = await utility_llm.ainvoke(
             [
                 SystemMessage(content=ORCHESTRATOR_PROMPT),
                 HumanMessage(content=f"{context}\n\nUser question: {query}"),
