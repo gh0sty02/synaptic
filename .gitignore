@@ -9,3 +9,6 @@ dataset/
 .env
 CLAUDE.md
 .vscode/
+.agents
+skills-lock.json
+data-gym-cache

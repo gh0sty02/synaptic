@@ -17,7 +17,6 @@ from ingestion.stackoverflow_loader import IngestionPipeline
 import redis.asyncio as aioredis
 import asyncpg
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_openai import ChatOpenAI
 from langfuse.langchain import CallbackHandler
 from langfuse import get_client
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
@@ -39,12 +38,9 @@ import agents.nodes.memory_node as mem_module
 import agents.nodes.writer_node as writer_module
 import agents.nodes.rag_agent as rag_agent_module
 
-LLM_MODEL = os.environ["LLM_MODEL"]
-LLM_BASE_URL = os.environ["LLM_BASE_URL"]
-LLM_API_KEY = os.environ["LLM_API_KEY"]
-
 logger = logging.getLogger(__name__)
 app_graph = None
+memory_manager: Optional[MemoryManager] = None
 _metrics: dict[str, float] = {
     "total_queries": 0,
     "total_errors": 0,
@@ -92,7 +88,7 @@ def is_upstream_connection_error(exc: Exception) -> bool:
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    global app_graph
+    global app_graph, memory_manager
 
     redis_client = aioredis.from_url(REDIS_URL)
     db_url = CONN_STR.replace("postgresql+psycopg2://", "postgresql://").replace(
@@ -110,6 +106,7 @@ async def lifespan(application: FastAPI):
     manager = MemoryManager(
         ShortTermMemory(redis_client), LongTermMemory(db_pool, embed_fn), utility_llm
     )
+    memory_manager = manager
     orch_module.memory_manager = manager
     mem_module.memory_manager = manager
     writer_module.memory_manager = manager
@@ -212,6 +209,7 @@ async def chat_completions(request: ChatCompletionRequest):
     created_at = int(time.time())
 
     langfuse_handler = CallbackHandler(trace_context={"trace_id": langfuse_trace_id})
+    mem_result = await memory_manager.load(session_id, query)
 
     initial_state: SynapticState = {
         "session_id": session_id,
@@ -221,8 +219,8 @@ async def chat_completions(request: ChatCompletionRequest):
         "active_agents": [],
         "metadata_filters": {},
         "system_prompt": SYSTEM_PROMPT,
-        "short_term_memory": [],
-        "long_term_memory": [],
+        "short_term_memory": mem_result["short_term_memory"],
+        "long_term_memory": mem_result["long_term_memory"],
         "retrieved_chunks": [],
         "tool_results": [],
         "token_counts": {},
@@ -234,6 +232,7 @@ async def chat_completions(request: ChatCompletionRequest):
         "trace_id": langfuse_trace_id,
         "latency_ms": {},
         "langfuse_callbacks": [],
+        "condensed_query": "",
     }
     config = {
         "configurable": {"thread_id": session_id},

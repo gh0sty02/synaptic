@@ -28,6 +28,7 @@ async def rag_agent(state: SynapticState):
         "final_answer": result["answer"],
         "retrieved_chunks": result["source_documents"],
         "citations": extract_citations(result["source_documents"]),
+        "condensed_query": result.get("condensed_query", state["query"]),
     }
 
 
