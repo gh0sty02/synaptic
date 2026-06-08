@@ -42,6 +42,7 @@ class SynapticState(TypedDict):
     # Observability
     trace_id: str
     latency_ms: dict[str, int]
+    langfuse_callbacks: list[dict[str, Any]]  # captures all LLM calls for Langfuse
 
 
 def route_query(state: SynapticState) -> str:

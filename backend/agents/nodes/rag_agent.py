@@ -3,6 +3,7 @@ from chain.rag_chain import RagChain
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from typing import Any
+from langfuse import observe
 
 rag_chain = None
 retriever = None
@@ -15,10 +16,13 @@ def init(embeddings: HuggingFaceEmbeddings) -> None:
     retriever = _rag.retriever
 
 
+@observe(name="rag_agent_node")
 async def rag_agent(state: SynapticState):
     memory_context = format_memory(state["short_term_memory"])
+    callbacks = state.get("callbacks", [])
     result = await rag_chain.ainvoke(
-        {"question": state["query"], "memory_context": memory_context}
+        {"question": state["query"], "memory_context": memory_context},
+        config={"callbacks": callbacks},
     )
     return {
         "final_answer": result["answer"],

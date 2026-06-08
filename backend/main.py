@@ -2,7 +2,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, SecretStr
+from llm import utility_llm
+from pydantic import BaseModel
 from typing import Literal, Optional
 import time
 import uuid
@@ -11,13 +12,14 @@ import os
 import asyncio
 import logging
 import re
+from ingestion.stackoverflow_loader import IngestionPipeline
 
 import redis.asyncio as aioredis
 import asyncpg
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
-from langfuse import get_client
 from langfuse.langchain import CallbackHandler
+from langfuse import get_client
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from openai import APIConnectionError
 
@@ -26,6 +28,11 @@ from memory.short_term import ShortTermMemory
 from memory.long_term import LongTermMemory
 from memory.manager import MemoryManager
 from ingestion.stackoverflow_loader import EMBEDDING_MODEL, CONN_STR
+from ingestion.stackoverflow_data_builder import (
+    SODatasetBuilder,
+    DATA_PATH,
+    EVAL_IDS_PATH,
+)
 from constants import SYSTEM_PROMPT
 import agents.nodes.orchestrator as orch_module
 import agents.nodes.memory_node as mem_module
@@ -38,6 +45,13 @@ LLM_API_KEY = os.environ["LLM_API_KEY"]
 
 logger = logging.getLogger(__name__)
 app_graph = None
+_metrics: dict[str, float] = {
+    "total_queries": 0,
+    "total_errors": 0,
+    "_latency_sum_ms": 0.0,
+}
+langfuse_client = get_client()
+trace = langfuse_client.create_trace_id()
 LANGFUSE_TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 UPSTREAM_CONNECTION_ERROR_MESSAGE = (
     "I couldn't reach the configured language model service. "
@@ -81,7 +95,9 @@ async def lifespan(application: FastAPI):
     global app_graph
 
     redis_client = aioredis.from_url(REDIS_URL)
-    db_url = CONN_STR.replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+psycopg://", "postgresql://")
+    db_url = CONN_STR.replace("postgresql+psycopg2://", "postgresql://").replace(
+        "postgresql+psycopg://", "postgresql://"
+    )
     db_pool = await asyncpg.create_pool(db_url)
 
     _embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
@@ -91,16 +107,9 @@ async def lifespan(application: FastAPI):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _embeddings.embed_query, text)
 
-    llm = ChatOpenAI(
-        model=LLM_MODEL,
-        base_url=LLM_BASE_URL,
-        api_key=SecretStr(LLM_API_KEY),
-        temperature=1.0,
-        top_p=0.95,
-        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    manager = MemoryManager(
+        ShortTermMemory(redis_client), LongTermMemory(db_pool, embed_fn), utility_llm
     )
-
-    manager = MemoryManager(ShortTermMemory(redis_client), LongTermMemory(db_pool, embed_fn), llm)
     orch_module.memory_manager = manager
     mem_module.memory_manager = manager
     writer_module.memory_manager = manager
@@ -130,12 +139,18 @@ class ChatCompletionRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+class IngestRequest(BaseModel):
+    source: Literal["stackoverflow"] = "stackoverflow"
+    limit: int = 45000
+
+
 def extract_query_from_messages(messages: list[ChatMessage]) -> str:
     for i in range(len(messages) - 1, -1, -1):
         if messages[i].role == "user":
             return messages[i].content
 
     from fastapi import HTTPException
+
     raise HTTPException(status_code=422, detail="No user message found in messages")
 
 
@@ -155,7 +170,37 @@ def health():
 
 @app.delete("/sessions/{session_id}", status_code=204)
 async def delete_session(session_id: str):
-    await mem_module.memory_manager.delete_session(session_id)
+    await mem_module.memory_manager.archive_session(session_id)
+
+
+@app.get("/sessions/{session_id}")
+async def get_session(session_id: str):
+    turns = await mem_module.memory_manager.stm.load()
+    return {"session_id": session_id, "turns": turns, "turn_count": len(turns)}
+
+
+@app.get("/metrics")
+def metrics():
+    total = _metrics["total_queries"]
+    avg_latency = (_metrics["_latency_sum_ms"] / total) if total else 0.0
+    return {
+        "total_queries": total,
+        "total_errors": _metrics["total_errors"],
+        "average_latency_ms": round(avg_latency, 2),
+    }
+
+
+@app.post("/ingest")
+async def ingest(request: IngestRequest):
+    def _run() -> int:
+        docs = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH).build()
+        if request.limit:
+            docs = docs[: request.limit]
+        IngestionPipeline(CONN_STR).run(docs)
+        return len(docs)
+
+    count = await asyncio.to_thread(_run)
+    return {"status": "ok", "rows_ingested": count}
 
 
 @app.post("/v1/chat/completions")
@@ -165,6 +210,8 @@ async def chat_completions(request: ChatCompletionRequest):
     langfuse_trace_id = make_langfuse_trace_id(session_id)
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created_at = int(time.time())
+
+    langfuse_handler = CallbackHandler(trace_context={"trace_id": langfuse_trace_id})
 
     initial_state: SynapticState = {
         "session_id": session_id,
@@ -186,12 +233,15 @@ async def chat_completions(request: ChatCompletionRequest):
         "agent_scratchpad": "",
         "trace_id": langfuse_trace_id,
         "latency_ms": {},
+        "langfuse_callbacks": [],
+    }
+    config = {
+        "configurable": {"thread_id": session_id},
+        "callbacks": [langfuse_handler],
     }
 
-    langfuse_handler = CallbackHandler(trace_context={"trace_id": langfuse_trace_id})
-    config = {"configurable": {"thread_id": session_id}, "callbacks": [langfuse_handler]}
-
     async def generate():
+        start = time.monotonic()
         try:
             # Role announcement — required by OpenAI SDK before any content
             yield chat_completion_chunk(
@@ -202,6 +252,9 @@ async def chat_completions(request: ChatCompletionRequest):
             )
 
             result = await app_graph.ainvoke(initial_state, config=config)
+            elapsed_ms = (time.monotonic() - start) * 1000
+            _metrics["total_queries"] += 1
+            _metrics["_latency_sum_ms"] += elapsed_ms
             answer = result.get("final_answer", "")
 
             if answer:
@@ -222,6 +275,7 @@ async def chat_completions(request: ChatCompletionRequest):
             yield stream_done()
 
         except Exception as exc:
+            _metrics["total_errors"] += 1
             if is_upstream_connection_error(exc):
                 logger.warning("LLM upstream connection failed", exc_info=True)
                 yield chat_completion_chunk(
@@ -236,7 +290,9 @@ async def chat_completions(request: ChatCompletionRequest):
                     completion_id,
                     created_at,
                     request.model,
-                    {"content": "Sorry, something went wrong while generating the response."},
+                    {
+                        "content": "Sorry, something went wrong while generating the response."
+                    },
                 )
 
             yield chat_completion_chunk(

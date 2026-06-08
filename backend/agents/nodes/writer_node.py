@@ -1,9 +1,11 @@
 from agents.graph import SynapticState
 from memory.manager import MemoryManager
+from langfuse import observe
 
 memory_manager: MemoryManager = None
 
 
+@observe(name="writer_node")
 async def writer_node(state: SynapticState) -> dict:
     human_msg = state["query"]
     ai_msg = state.get("final_answer", "")
