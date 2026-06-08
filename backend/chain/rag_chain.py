@@ -1,13 +1,24 @@
+from typing import Any
+
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from ingestion.stackoverflow_loader import EMBEDDING_MODEL, CONN_STR
-from llm import main_llm
+from langchain_core.runnables import RunnableLambda
+from ingestion.stackoverflow_loader import CONN_STR
+from llm import main_llm, utility_llm
 from retrieval.chunks_retriever import ChunksRetriever
 from constants import SYSTEM_PROMPT
-from operator import itemgetter
+
+_CONDENSATION_SYSTEM_PROMPT = (
+    "Rewrite the follow-up question as a standalone question by replacing any "
+    "pronouns or vague references with the specific topic from the conversation history.\n\n"
+    "Example:\n"
+    "History: Human: How do I sort a list in Python?\n"
+    "Follow-up: How do I do the same in Ruby?\n"
+    "Rewritten: How do I sort a list in Ruby?\n\n"
+    "Output only the rewritten question, nothing else."
+)
 
 
 class RagChain:
@@ -37,26 +48,72 @@ class RagChain:
             ]
         )
 
+    def _build_condensation_chain(self) -> Any:
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", _CONDENSATION_SYSTEM_PROMPT),
+                (
+                    "human",
+                    "Conversation History:\n{memory_context}\n\nFollow-up Question: {question}",
+                ),
+            ]
+        )
+        return prompt | utility_llm | StrOutputParser()
+
     def build(self):
         _NO_CONTEXT_REPLY = "I couldn't find relevant information for your question."
+        _condensation_chain = self._build_condensation_chain()
         _llm_chain = self.prompt | main_llm | StrOutputParser()
 
-        async def _answer(retrieved: dict) -> dict:
-            docs = retrieved["source_documents"]
+        async def _condense(inputs: dict) -> dict:
+            if not inputs.get("memory_context", "").strip():
+                return {
+                    **inputs,
+                    "retrieval_question": inputs["question"],
+                    "condensed_query": inputs["question"],
+                }
+
+            human_history = "\n".join(
+                line
+                for line in inputs["memory_context"].splitlines()
+                if line.startswith("Human:")
+            )
+            condensed = (
+                await _condensation_chain.ainvoke(
+                    {
+                        "memory_context": human_history,
+                        "question": inputs["question"],
+                    }
+                )
+            ).strip() or inputs["question"]
+
+            return {
+                **inputs,
+                "retrieval_question": condensed,
+                "condensed_query": condensed,
+            }
+
+        async def _retrieve(inputs: dict) -> dict:
+            docs = await self.retriever.ainvoke(inputs["retrieval_question"])
+            return {**inputs, "source_documents": docs}
+
+        async def _answer(inputs: dict) -> dict:
+            docs = inputs.get("source_documents", [])
             if not docs:
-                return {**retrieved, "context": "", "answer": _NO_CONTEXT_REPLY}
+                return {**inputs, "context": "", "answer": _NO_CONTEXT_REPLY}
+
             context = self._format_docs(docs)
             answer = await _llm_chain.ainvoke(
                 {
-                    "question": retrieved["question"],
-                    "memory_context": retrieved["memory_context"],
+                    "question": inputs["question"],
+                    "memory_context": inputs["memory_context"],
                     "context": context,
                 }
             )
-            return {**retrieved, "context": context, "answer": answer}
+            return {**inputs, "answer": answer, "context": context}
 
-        return {
-            "source_documents": itemgetter("question") | self.retriever,
-            "question": itemgetter("question"),
-            "memory_context": itemgetter("memory_context"),
-        } | RunnableLambda(_answer)
+        return (
+            RunnableLambda(_condense)
+            | RunnableLambda(_retrieve)
+            | RunnableLambda(_answer)
+        )

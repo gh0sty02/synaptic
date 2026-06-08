@@ -70,8 +70,25 @@ class TriageOutput(BaseModel):
 
 
 class Triage:
-    async def run(self, query: str, config: dict[str, Any]) -> TriageOutput:
-        messages = [SystemMessage(content=TRIAGE_PROMPT), HumanMessage(content=query)]
+    async def run(
+        self,
+        query: str,
+        config: dict[str, Any],
+        history: list[dict[str, Any]] | None = None,
+    ) -> TriageOutput:
+        human_turns = [
+            m["content"]
+            for m in (history or [])
+            if m.get("role") == "human"
+        ]
+        if human_turns:
+            context = "Recent conversation:\n" + "\n".join(
+                f"Human: {q}" for q in human_turns[-3:]
+            )
+            content = f"{context}\n\nCurrent query: {query}"
+        else:
+            content = query
+        messages = [SystemMessage(content=TRIAGE_PROMPT), HumanMessage(content=content)]
         response = await utility_llm.ainvoke(messages, config=config)
         raw = response.content
         logger.debug("Triage raw output: %r", raw)
@@ -85,7 +102,11 @@ triage_agent = Triage()
 @observe(name="triage_node")
 async def triage_node(state: SynapticState):
     callbacks = state.get("callbacks", [])
-    result = await triage_agent.run(state["query"], config={"callbacks": callbacks})
+    result = await triage_agent.run(
+        state["query"],
+        config={"callbacks": callbacks},
+        history=state.get("short_term_memory", []),
+    )
     return {
         "intent": result.intent,
         "metadata_filters": result.metadata_filters,

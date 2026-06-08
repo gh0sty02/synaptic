@@ -28,6 +28,8 @@ class SynapticState(TypedDict):
     long_term_memory: list[dict[str, Any]]  # retrieved session summaries from pgvector
     retrieved_chunks: list[dict[str, Any]]  # RAG output per turn
     tool_results: list[dict[str, Any]]  # tool call outputs
+    # Query reformulation — written by rag_agent; equals query when memory_context is empty
+    condensed_query: str
 
     # Token budget (phase 3 — initialised here, acted on later)
     token_counts: dict[str, int]

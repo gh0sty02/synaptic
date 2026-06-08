@@ -5,7 +5,8 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from llm import utility_llm
 from agents.graph import SynapticState
 from memory.manager import MemoryManager
-from .rag_agent import retriever, format_memory, extract_citations
+from . import rag_agent as _rag_agent
+from .rag_agent import format_memory, extract_citations
 from constants import BEHAVIORAL_GUARDRAILS
 from langfuse import observe
 
@@ -71,7 +72,7 @@ async def orchestrator_node(state: SynapticState) -> dict[str, Any]:
 
     memory_result, docs = await asyncio.gather(
         memory_manager.load(session_id=state["session_id"], query=state["query"]),
-        retriever.ainvoke(state["query"]),
+        _rag_agent.retriever.ainvoke(state["query"]),
     )
 
     short_term = format_memory(memory_result.get("short_term_memory", []))

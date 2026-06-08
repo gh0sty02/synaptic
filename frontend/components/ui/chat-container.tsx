@@ -183,6 +183,7 @@ export const ChatContainer = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const sessionId = useRef(crypto.randomUUID());
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -214,6 +215,7 @@ export const ChatContainer = () => {
     setIsStreaming(true);
 
     try {
+      const extraParams = { session_id: sessionId.current };
       const stream = await client.chat.completions.create({
         model: 'synaptic',
         messages: [...messages, userMessage].map((m) => ({
@@ -221,6 +223,7 @@ export const ChatContainer = () => {
           content: m.content,
         })),
         stream: true,
+        ...extraParams,
       });
 
       for await (const chunk of stream) {

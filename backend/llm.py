@@ -16,10 +16,6 @@ main_llm = ChatOpenAI(
     api_key=SecretStr(_API_KEY),
     temperature=1.0,
     top_p=0.95,
-    extra_body={
-        "chat_template_kwargs": {"enable_thinking": True},
-        "reasoning_budget": 1024,
-    },
 )
 
 # Used by: Triage, Orchestrator, RagChain (condensation), MemoryManager (summarisation)
@@ -27,6 +23,6 @@ utility_llm = ChatOpenAI(
     model=_MODEL,
     base_url=_BASE_URL,
     api_key=SecretStr(_API_KEY),
-    temperature=0.0,
-    extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+    temperature=1.0,
+    top_p=0.95,
 )
