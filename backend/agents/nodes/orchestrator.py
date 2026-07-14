@@ -2,7 +2,7 @@ import asyncio
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langfuse import observe
+from langfuse import observe, get_client
 
 from agents.graph import SynapticState
 from constants import BEHAVIORAL_GUARDRAILS
@@ -62,6 +62,8 @@ async def orchestrator_node(state: SynapticState) -> dict[str, Any]:
     """
     assert memory_manager is not None, "memory_manager not initialised"
 
+    langfuse = get_client()
+
     memory_result, docs = await asyncio.gather(
         memory_manager.load(session_id=state["session_id"], query=state["query"]),
         _rag_agent.retriever.ainvoke(state["query"]),
@@ -73,6 +75,15 @@ async def orchestrator_node(state: SynapticState) -> dict[str, Any]:
         long_term_memory=memory_result.get("long_term_memory", []),
         retrieved_chunks=docs,
     )
+
+    langfuse.update_current_span(
+        metadata={
+            "budget_decision": bundle.decision,
+            "token_count": bundle.token_count,
+            "budget_exceeded": state.get("budget_exceeded"),
+        }
+    )
+
     callbacks = state.get("callbacks", [])
 
     answer = await _orchestrator.merge(

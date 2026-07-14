@@ -1,4 +1,8 @@
 from llmlingua import PromptCompressor
+from llm import utility_llm
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Optimiser:
@@ -17,8 +21,17 @@ class Optimiser:
         return self._compressor
 
     def compress(self, texts: list[str], target_tokens: int) -> str:
-        result = self._get_compressor().compress_prompt(
-            context=texts, target_token=target_tokens
-        )
+        try:
+            result = self._get_compressor().compress_prompt(
+                context=texts, target_token=target_tokens
+            )
+            return str(result["compressed_prompt"])
+        except Exception as e:
+            logger.warning(
+                msg=f"WARN: Exception Occured. Failed to compress prompt using compressor. Reason: {str(e)}"
+            )
+            prompt = f"Summarise below in ~{target_tokens} tokens:\n\n" + "\n\n".join(
+                texts
+            )
 
-        return str(result["compressed_prompt"])
+            return utility_llm.invoke(prompt).content

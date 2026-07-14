@@ -110,8 +110,9 @@ def fit_long_term(summaries: list[dict[str, Any]], cap: int) -> tuple[str, int, 
 
 
 def fit_chunks(docs: list[Document], cap: int) -> tuple[str, int, bool]:
-    """Docs arrive sorted best-relevance-first (ChunksRetriever rerank); drop the
-    lowest-ranked (tail) first."""
+    """Sort the Docs according to the best-relevance-first (ChunksRetriever rerank) using the relevance score; drop the lowest-ranked (tail) first."""
+
+    docs = sorted(docs, key=lambda d: d.metadata.get("score", 0.0), reverse=True)
     truncated = False
     original_count = len(docs)
     overflow_threshold = original_count * 0.5
