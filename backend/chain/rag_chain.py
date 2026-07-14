@@ -1,14 +1,15 @@
 from typing import Any
 
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_core.documents import Document
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
+from langchain_huggingface import HuggingFaceEmbeddings
+
+from constants import SYSTEM_PROMPT
+from context.engineer import AGENT_BUDGET, fit_chunks
 from ingestion.stackoverflow_loader import CONN_STR
 from llm import main_llm, utility_llm
 from retrieval.chunks_retriever import ChunksRetriever
-from constants import SYSTEM_PROMPT
 
 _CONDENSATION_SYSTEM_PROMPT = (
     "Rewrite the follow-up question as a standalone question by replacing any "
@@ -30,12 +31,6 @@ class RagChain:
             k=5,
         )
         self.prompt = self._build_prompt()
-
-    def _format_docs(self, docs: list[Document]) -> str:
-        return "\n\n".join(
-            f"[Source: {doc.metadata.get('title', 'Unknown')}]\n{doc.page_content}"
-            for doc in docs
-        )
 
     def _build_prompt(self) -> ChatPromptTemplate:
         return ChatPromptTemplate.from_messages(
@@ -60,7 +55,7 @@ class RagChain:
         )
         return prompt | utility_llm | StrOutputParser()
 
-    def build(self):
+    def build(self) -> Any:
         _NO_CONTEXT_REPLY = "I couldn't find relevant information for your question."
         _condensation_chain = self._build_condensation_chain()
         _llm_chain = self.prompt | main_llm | StrOutputParser()
@@ -100,9 +95,17 @@ class RagChain:
         async def _answer(inputs: dict) -> dict:
             docs = inputs.get("source_documents", [])
             if not docs:
-                return {**inputs, "context": "", "answer": _NO_CONTEXT_REPLY}
+                return {
+                    **inputs,
+                    "context": "",
+                    "answer": _NO_CONTEXT_REPLY,
+                    "chunks_tokens": 0,
+                    "chunks_truncated": False,
+                }
 
-            context = self._format_docs(docs)
+            context, chunks_tokens, chunks_truncated = fit_chunks(
+                docs, AGENT_BUDGET["rag_agent"]["retrieved_chunks"]
+            )
             answer = await _llm_chain.ainvoke(
                 {
                     "question": inputs["question"],
@@ -110,7 +113,13 @@ class RagChain:
                     "context": context,
                 }
             )
-            return {**inputs, "answer": answer, "context": context}
+            return {
+                **inputs,
+                "answer": answer,
+                "context": context,
+                "chunks_tokens": chunks_tokens,
+                "chunks_truncated": chunks_truncated,
+            }
 
         return (
             RunnableLambda(_condense)
