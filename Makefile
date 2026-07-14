@@ -1,4 +1,4 @@
-.PHONY: dev infra backend frontend up down ingest serve
+.PHONY: dev infra backend frontend up down ingest serve lint lint-fix
 
 dev: up
 
@@ -41,3 +41,11 @@ migrate:
 # Run the StackOverflow ingestion pipeline
 ingest:
 	cd backend && PYTHONPATH=$(PWD)/backend ../.venv/bin/python ingestion/stackoverflow_loader.py
+
+# Lint the backend with ruff
+lint:
+	cd backend && ../.venv/bin/ruff check .
+
+# Lint and auto-fix what ruff can fix
+lint-fix:
+	cd backend && ../.venv/bin/ruff check --fix .

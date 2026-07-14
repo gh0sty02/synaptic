@@ -1,7 +1,9 @@
-from .short_term import ShortTermMemory
-from .long_term import LongTermMemory
-from langchain_openai import ChatOpenAI
 import asyncio
+
+from langchain_openai import ChatOpenAI
+
+from .long_term import LongTermMemory
+from .short_term import ShortTermMemory
 
 
 class MemoryManager:

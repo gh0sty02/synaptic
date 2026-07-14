@@ -1,12 +1,13 @@
 import hashlib
 import logging
 import warnings
-from typing import TypedDict
-import pandas as pd
 from pathlib import Path
+from typing import TypedDict
+
+import pandas as pd
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
-from tqdm import tqdm
 from langchain_core.documents import Document
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 

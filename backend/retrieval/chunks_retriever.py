@@ -1,13 +1,14 @@
-from typing import Any, ClassVar, Optional
+import os
+from typing import Any, ClassVar
+
 import numpy as np
 import psycopg
-from pgvector.psycopg import register_vector, register_vector_async
-from pydantic import ConfigDict
-from langchain_huggingface import HuggingFaceEmbeddings
+from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
-from dotenv import load_dotenv
-import os
+from langchain_huggingface import HuggingFaceEmbeddings
+from pgvector.psycopg import register_vector, register_vector_async
+from pydantic import ConfigDict
 from sentence_transformers import CrossEncoder
 
 load_dotenv()
@@ -41,7 +42,7 @@ class ChunksRetriever(BaseRetriever):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     embeddings: HuggingFaceEmbeddings
-    _encoder: ClassVar[Optional[CrossEncoder]] = None
+    _encoder: ClassVar[CrossEncoder | None] = None
 
     @classmethod
     def _get_encoder(cls) -> CrossEncoder:
@@ -76,7 +77,9 @@ class ChunksRetriever(BaseRetriever):
 
             re_ranked = self._get_encoder().predict([(query, row[0]) for row in rows])
 
-            scored = sorted(zip(re_ranked, rows), key=lambda x: x[0], reverse=True)
+            scored = sorted(
+                zip(re_ranked, rows, strict=True), key=lambda x: x[0], reverse=True
+            )
 
             top = [(score, r) for score, r in scored[:RETRIEVAL_TOP_K]]
         return [
@@ -108,7 +111,9 @@ class ChunksRetriever(BaseRetriever):
 
             re_ranked = self._get_encoder().predict([(query, row[0]) for row in rows])
 
-            scored = sorted(zip(re_ranked, rows), key=lambda x: x[0], reverse=True)
+            scored = sorted(
+                zip(re_ranked, rows, strict=True), key=lambda x: x[0], reverse=True
+            )
 
             top = [(score, r) for score, r in scored[:RETRIEVAL_TOP_K]]
         return [

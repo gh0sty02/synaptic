@@ -1,18 +1,20 @@
-from dotenv import load_dotenv
 import json
 import logging
 import os
-import warnings
 import time
+import warnings
+
 import psycopg
 from bs4 import XMLParsedAsHTMLWarning
-from tqdm import tqdm
+from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
+from tqdm import tqdm
+
 from ingestion.stackoverflow_data_builder import (
-    DocumentMetadata,
     DATA_PATH,
     EVAL_IDS_PATH,
+    DocumentMetadata,
     SODatasetBuilder,
 )
 
@@ -300,6 +302,7 @@ class IngestionPipeline:
                             texts[batch_slice],
                             vectors[batch_slice],
                             metadatas[batch_slice],
+                            strict=True,
                         ):
                             copy.write_row(
                                 (

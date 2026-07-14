@@ -1,8 +1,10 @@
-from typing import TypedDict, Annotated, Sequence, Any
-from langchain_core.messages import BaseMessage
 import operator
 import os
-from langgraph.graph import StateGraph, END
+from collections.abc import Sequence
+from typing import Annotated, Any, TypedDict
+
+from langchain_core.messages import BaseMessage
+from langgraph.graph import END, StateGraph
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
@@ -61,11 +63,11 @@ def route_query(state: SynapticState) -> str:
 
 
 # Node imports after SynapticState is defined to avoid circular import failure
-from .nodes.triage import triage_node
-from .nodes.rag_agent import rag_agent
-from .nodes.memory_node import memory_node
-from .nodes.orchestrator import orchestrator_node
-from .nodes.writer_node import writer_node
+from .nodes.memory_node import memory_node  # noqa: E402
+from .nodes.orchestrator import orchestrator_node  # noqa: E402
+from .nodes.rag_agent import rag_agent  # noqa: E402
+from .nodes.triage import triage_node  # noqa: E402
+from .nodes.writer_node import writer_node  # noqa: E402
 
 # ── Graph definition ──────────────────────────────────────────────────────────
 
