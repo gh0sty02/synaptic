@@ -1,6 +1,8 @@
-from llmlingua import PromptCompressor
-from llm import utility_llm
 import logging
+
+from llmlingua import PromptCompressor
+
+from llm import utility_llm
 
 logger = logging.getLogger(__name__)
 

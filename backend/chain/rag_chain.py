@@ -1,5 +1,6 @@
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
+from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
@@ -10,6 +11,21 @@ from context.engineer import AGENT_BUDGET, fit_chunks
 from ingestion.stackoverflow_loader import CONN_STR
 from llm import main_llm, utility_llm
 from retrieval.chunks_retriever import ChunksRetriever
+from retrieval.hyde import generate_hypothetical_answer
+
+
+class _RagPipelineState(TypedDict):
+    question: str
+    memory_context: str
+    use_hyde: NotRequired[bool]
+    retrieval_question: NotRequired[str]
+    condensed_query: NotRequired[str]
+    source_documents: NotRequired[list[Document]]
+    answer: NotRequired[str]
+    context: NotRequired[str]
+    chunks_tokens: NotRequired[int]
+    chunks_truncated: NotRequired[bool]
+
 
 _CONDENSATION_SYSTEM_PROMPT = (
     "Rewrite the follow-up question as a standalone question by replacing any "
@@ -43,6 +59,15 @@ class RagChain:
             ]
         )
 
+    async def _hyde(self, inputs: _RagPipelineState) -> _RagPipelineState:
+        if not inputs.get("use_hyde", False):
+            return inputs
+        hypothetical = await generate_hypothetical_answer(
+            inputs.get("retrieval_question", inputs["question"])
+        )
+
+        return {**inputs, "retrieval_question": hypothetical}
+
     def _build_condensation_chain(self) -> Any:
         prompt = ChatPromptTemplate.from_messages(
             [
@@ -60,7 +85,7 @@ class RagChain:
         _condensation_chain = self._build_condensation_chain()
         _llm_chain = self.prompt | main_llm | StrOutputParser()
 
-        async def _condense(inputs: dict) -> dict:
+        async def _condense(inputs: _RagPipelineState) -> _RagPipelineState:
             if not inputs.get("memory_context", "").strip():
                 return {
                     **inputs,
@@ -88,11 +113,13 @@ class RagChain:
                 "condensed_query": condensed,
             }
 
-        async def _retrieve(inputs: dict) -> dict:
-            docs = await self.retriever.ainvoke(inputs["retrieval_question"])
+        async def _retrieve(inputs: _RagPipelineState) -> _RagPipelineState:
+            docs = await self.retriever.ainvoke(
+                inputs.get("retrieval_question", inputs["question"])
+            )
             return {**inputs, "source_documents": docs}
 
-        async def _answer(inputs: dict) -> dict:
+        async def _answer(inputs: _RagPipelineState) -> _RagPipelineState:
             docs = inputs.get("source_documents", [])
             if not docs:
                 return {
@@ -123,6 +150,7 @@ class RagChain:
 
         return (
             RunnableLambda(_condense)
+            | RunnableLambda(self._hyde)
             | RunnableLambda(_retrieve)
             | RunnableLambda(_answer)
         )

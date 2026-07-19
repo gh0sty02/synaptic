@@ -2,29 +2,33 @@
 
 This file is the primary source of procedural knowledge for agents working on this repository. Read it before touching code.
 
+## Conversation Mode
+
+Default to explaining and discussing — derivations, tradeoffs, "why" behind existing code, concept clarification. Do **not** implement, edit, or refactor code unless the user explicitly asks for the change. If a clarifying question surfaces something that looks like it should change, say so and ask before editing rather than editing and then summarizing.
+
 ---
 
 ## Skill Routing
 
 Before any task, load every applicable skill. Skill invocation is not optional — general reasoning is a fallback only when no relevant skill exists.
 
-| Task | Skills to load |
-|------|---------------|
-| Add or modify a LangGraph node | `ai-engineer`, `tdd` |
-| Modify the RAG pipeline (chain, retriever, reranker) | `ai-engineer`, `tdd` |
-| Add or change a FastAPI endpoint | `api-design`, `tdd` |
-| Modify memory system (Redis, pgvector, MemoryManager) | `ai-engineer`, `tdd` |
-| Debug a broken node, failing retrieval, or bad intent | `diagnose` |
-| Improve or analyse architecture | `architecture`, `improve-codebase-architecture` |
-| Plan a refactor | `request-refactor-plan` |
-| Review a branch or PR | `review` |
-| Run a QA session and file issues | `qa` |
-| Triage GitHub issues | `triage` |
-| Write a PRD from conversation context | `to-prd` |
-| Write Python code (any file) | `python-expert` |
-| Understand an unfamiliar module | `zoom-out` |
-| End a session for handoff | `handoff` |
-| Any software design decision | `software-architecture` |
+| Task                                                  | Skills to load                                  |
+| ----------------------------------------------------- | ----------------------------------------------- |
+| Add or modify a LangGraph node                        | `ai-engineer`, `tdd`                            |
+| Modify the RAG pipeline (chain, retriever, reranker)  | `ai-engineer`, `tdd`                            |
+| Add or change a FastAPI endpoint                      | `api-design`, `tdd`                             |
+| Modify memory system (Redis, pgvector, MemoryManager) | `ai-engineer`, `tdd`                            |
+| Debug a broken node, failing retrieval, or bad intent | `diagnose`                                      |
+| Improve or analyse architecture                       | `architecture`, `improve-codebase-architecture` |
+| Plan a refactor                                       | `request-refactor-plan`                         |
+| Review a branch or PR                                 | `review`                                        |
+| Run a QA session and file issues                      | `qa`                                            |
+| Triage GitHub issues                                  | `triage`                                        |
+| Write a PRD from conversation context                 | `to-prd`                                        |
+| Write Python code (any file)                          | `python-expert`                                 |
+| Understand an unfamiliar module                       | `zoom-out`                                      |
+| End a session for handoff                             | `handoff`                                       |
+| Any software design decision                          | `software-architecture`                         |
 
 Combinations are the norm: adding a new node requires `ai-engineer` + `tdd` + `python-expert` simultaneously.
 
@@ -66,48 +70,48 @@ All nodes read and write `SynapticState` (defined in [backend/agents/graph.py](b
 
 Key fields every node author must understand:
 
-| Field | Type | Set by | Read by |
-|-------|------|--------|---------|
-| `query` | `str` | `main.py` | all nodes |
-| `intent` | `str` | `triage_node` | `route_query` edge |
-| `metadata_filters` | `dict` | `triage_node` | `rag_agent` |
-| `short_term_memory` | `list[dict]` | `main.py` (pre-load) | `rag_agent`, `memory_agent` |
-| `long_term_memory` | `list[dict]` | `main.py` (pre-load) | `orchestrator` |
-| `retrieved_chunks` | `list[dict]` | `rag_agent` | `writer_node`, citations |
-| `final_answer` | `str` | `rag_agent` / `writer_node` | `main.py` → SSE |
-| `citations` | `list[dict]` | `rag_agent` | `writer_node` |
-| `trace_id` | `str` | `main.py` | Langfuse |
-| `latency_ms` | `dict[str, int]` | each node | `metrics` endpoint |
+| Field               | Type             | Set by                      | Read by                     |
+| ------------------- | ---------------- | --------------------------- | --------------------------- |
+| `query`             | `str`            | `main.py`                   | all nodes                   |
+| `intent`            | `str`            | `triage_node`               | `route_query` edge          |
+| `metadata_filters`  | `dict`           | `triage_node`               | `rag_agent`                 |
+| `short_term_memory` | `list[dict]`     | `main.py` (pre-load)        | `rag_agent`, `memory_agent` |
+| `long_term_memory`  | `list[dict]`     | `main.py` (pre-load)        | `orchestrator`              |
+| `retrieved_chunks`  | `list[dict]`     | `rag_agent`                 | `writer_node`, citations    |
+| `final_answer`      | `str`            | `rag_agent` / `writer_node` | `main.py` → SSE             |
+| `citations`         | `list[dict]`     | `rag_agent`                 | `writer_node`               |
+| `trace_id`          | `str`            | `main.py`                   | Langfuse                    |
+| `latency_ms`        | `dict[str, int]` | each node                   | `metrics` endpoint          |
 
 Valid `intent` values: `"rag"`, `"memory"`, `"multi"`, `"blocked"`.
 
 ### Agent Roster
 
-| Node | File | Role |
-|------|------|------|
-| `triage_node` | `agents/nodes/triage.py` | Classifies intent, extracts `metadata_filters` |
-| `rag_agent` | `agents/nodes/rag_agent.py` | Invokes `RagChain`, populates `retrieved_chunks`, `citations`, `final_answer` |
-| `memory_node` | `agents/nodes/memory_node.py` | Handles explicit memory read/write; chains into `rag_agent` |
-| `orchestrator_node` | `agents/nodes/orchestrator.py` | Merges multi-intent results via `MemoryManager` |
-| `writer_node` | `agents/nodes/writer_node.py` | Final answer formatting; may compress context |
+| Node                | File                           | Role                                                                          |
+| ------------------- | ------------------------------ | ----------------------------------------------------------------------------- |
+| `triage_node`       | `agents/nodes/triage.py`       | Classifies intent, extracts `metadata_filters`                                |
+| `rag_agent`         | `agents/nodes/rag_agent.py`    | Invokes `RagChain`, populates `retrieved_chunks`, `citations`, `final_answer` |
+| `memory_node`       | `agents/nodes/memory_node.py`  | Handles explicit memory read/write; chains into `rag_agent`                   |
+| `orchestrator_node` | `agents/nodes/orchestrator.py` | Merges multi-intent results via `MemoryManager`                               |
+| `writer_node`       | `agents/nodes/writer_node.py`  | Final answer formatting; may compress context                                 |
 
 All agents use the **same model**: `unsloth/gemma-4-E4B-it` via Unsloth Studio's OpenAI-compatible REST API. Agent differentiation is entirely through system prompt and tool access — not separate model instances.
 
 ### Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | FastAPI (Python 3.11+), async, SSE via `StreamingResponse` |
-| Agent orchestration | LangGraph 0.2+ — stateful graph, typed state, AsyncRedisSaver checkpointing |
-| LLM | Gemma 4 E4B (Q5_K_M) via Unsloth Studio — `ChatOpenAI` client, env: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` |
-| Embeddings | `nomic-embed-text` (HuggingFace, local) — 768-dim, `HuggingFaceEmbeddings` |
-| Vector DB | pgvector on PostgreSQL 16 — HNSW index, cosine similarity |
-| Short-term memory | Redis 7 — `session:{id}:turns` list, TTL 24 h, max 10 turns |
-| Long-term memory | pgvector `memory_summaries` table — embedded session summaries |
-| Sparse retrieval | `rank-bm25` — in-memory, rebuilt on startup |
-| Reranker | `bge-reranker-base` (sentence-transformers cross-encoder, CPU) |
-| Observability | Langfuse (self-hosted Docker) — LangChain `CallbackHandler` |
-| Evals | RAGAS — offline eval suite on held-out test sets |
+| Layer               | Technology                                                                                                     |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Backend             | FastAPI (Python 3.11+), async, SSE via `StreamingResponse`                                                     |
+| Agent orchestration | LangGraph 0.2+ — stateful graph, typed state, AsyncRedisSaver checkpointing                                    |
+| LLM                 | Gemma 4 E4B (Q5_K_M) via Unsloth Studio — `ChatOpenAI` client, env: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` |
+| Embeddings          | `nomic-embed-text` (HuggingFace, local) — 768-dim, `HuggingFaceEmbeddings`                                     |
+| Vector DB           | pgvector on PostgreSQL 16 — HNSW index, cosine similarity                                                      |
+| Short-term memory   | Redis 7 — `session:{id}:turns` list, TTL 24 h, max 10 turns                                                    |
+| Long-term memory    | pgvector `memory_summaries` table — embedded session summaries                                                 |
+| Sparse retrieval    | `rank-bm25` — in-memory, rebuilt on startup                                                                    |
+| Reranker            | `bge-reranker-base` (sentence-transformers cross-encoder, CPU)                                                 |
+| Observability       | Langfuse (self-hosted Docker) — LangChain `CallbackHandler`                                                    |
+| Evals               | RAGAS — offline eval suite on held-out test sets                                                               |
 
 ---
 
@@ -155,7 +159,7 @@ Do **not** instantiate `ChatOpenAI`, `HuggingFaceEmbeddings`, or `MemoryManager`
 
 Use Pydantic `BaseModel` for all LLM output schemas. Parse with `.model_validate_json()`. Strip markdown fences before parsing:
 
-```python
+````python
 import re
 from pydantic import BaseModel
 
@@ -164,7 +168,7 @@ class MyOutput(BaseModel):
 
 clean = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
 result = MyOutput.model_validate_json(clean)
-```
+````
 
 ### 4. Python Standards
 
@@ -203,6 +207,7 @@ Redis key structure: `session:{session_id}:turns` (list of JSON turn dicts).
 ### 8. Test-Driven Development
 
 Use the `tdd` skill for all new features and bug fixes. Key rules:
+
 - One test → one implementation → repeat (vertical slices, not horizontal).
 - Tests verify behaviour through public interfaces, not implementation details.
 - No mocking of internal collaborators — prefer integration-style tests against real code paths.
@@ -236,6 +241,7 @@ Columns: `id`, `session_id`, `summary`, `embedding` (768-dim), `turn_count`, `cr
 Architectural decisions are recorded in [docs/adr/](docs/adr/). Before proposing a structural change, read the existing ADRs. When an architectural decision is made or rejected during work, record it using the `architecture-decision-records` skill and [docs/adr/template.md](docs/adr/template.md).
 
 Current ADRs:
+
 - [0001 — Query condensation / contextual RAG](docs/adr/0001-query-condensation-contextual-rag.md)
 
 ---
@@ -244,22 +250,22 @@ Current ADRs:
 
 Use these terms exactly. Do not drift to generic alternatives.
 
-| Term | Meaning |
-|------|---------|
-| `SynapticState` | The typed state dict threaded through the LangGraph graph |
-| `intent` | The triage classification: `rag`, `memory`, `multi`, `blocked` |
-| `metadata_filters` | Structured filters extracted by triage from natural language |
-| `triage_node` | The first node; classifies intent and extracts metadata filters |
-| `rag_agent` | The node that invokes `RagChain` and populates retrieved chunks |
-| `memory_node` | The node that handles explicit memory read/write requests |
-| `orchestrator_node` | The node that merges results for multi-intent queries |
-| `writer_node` | The final node; formats the answer before the graph ends |
-| `MemoryManager` | The single interface to both short-term (Redis) and long-term (pgvector) memory |
-| `RagChain` | The LCEL chain in `chain/rag_chain.py` — hybrid search + rerank + generate |
-| `retrieved_chunks` | The list of `{content, source, score, metadata}` dicts from RAG |
-| `citations` | The `[{title, relevance_score}]` list derived from retrieved chunks |
-| `session_id` | The UUID that keys Redis turns and LangGraph checkpoints |
-| `trace_id` | The Langfuse trace ID derived from `session_id` |
+| Term                | Meaning                                                                         |
+| ------------------- | ------------------------------------------------------------------------------- |
+| `SynapticState`     | The typed state dict threaded through the LangGraph graph                       |
+| `intent`            | The triage classification: `rag`, `memory`, `multi`, `blocked`                  |
+| `metadata_filters`  | Structured filters extracted by triage from natural language                    |
+| `triage_node`       | The first node; classifies intent and extracts metadata filters                 |
+| `rag_agent`         | The node that invokes `RagChain` and populates retrieved chunks                 |
+| `memory_node`       | The node that handles explicit memory read/write requests                       |
+| `orchestrator_node` | The node that merges results for multi-intent queries                           |
+| `writer_node`       | The final node; formats the answer before the graph ends                        |
+| `MemoryManager`     | The single interface to both short-term (Redis) and long-term (pgvector) memory |
+| `RagChain`          | The LCEL chain in `chain/rag_chain.py` — hybrid search + rerank + generate      |
+| `retrieved_chunks`  | The list of `{content, source, score, metadata}` dicts from RAG                 |
+| `citations`         | The `[{title, relevance_score}]` list derived from retrieved chunks             |
+| `session_id`        | The UUID that keys Redis turns and LangGraph checkpoints                        |
+| `trace_id`          | The Langfuse trace ID derived from `session_id`                                 |
 
 ---
 
@@ -267,16 +273,16 @@ Use these terms exactly. Do not drift to generic alternatives.
 
 Required at runtime (set in `.env` or Docker Compose):
 
-| Variable | Used for |
-|----------|----------|
-| `LLM_MODEL` | Model name passed to `ChatOpenAI` |
-| `LLM_BASE_URL` | Unsloth Studio OpenAI-compatible base URL |
-| `LLM_API_KEY` | API key for LLM endpoint |
-| `REDIS_URL` | Redis connection string (default: `redis://localhost:6379`) |
-| `POSTGRES_URL` / `CONN_STR` | pgvector connection string |
-| `LANGFUSE_HOST` | Langfuse self-hosted URL |
-| `LANGFUSE_PUBLIC_KEY` | Langfuse auth |
-| `LANGFUSE_SECRET_KEY` | Langfuse auth |
+| Variable                    | Used for                                                    |
+| --------------------------- | ----------------------------------------------------------- |
+| `LLM_MODEL`                 | Model name passed to `ChatOpenAI`                           |
+| `LLM_BASE_URL`              | Unsloth Studio OpenAI-compatible base URL                   |
+| `LLM_API_KEY`               | API key for LLM endpoint                                    |
+| `REDIS_URL`                 | Redis connection string (default: `redis://localhost:6379`) |
+| `POSTGRES_URL` / `CONN_STR` | pgvector connection string                                  |
+| `LANGFUSE_HOST`             | Langfuse self-hosted URL                                    |
+| `LANGFUSE_PUBLIC_KEY`       | Langfuse auth                                               |
+| `LANGFUSE_SECRET_KEY`       | Langfuse auth                                               |
 
 Swap models without code changes: set `LLM_MODEL` to a larger variant (e.g. `unsloth/gemma-4-26b-A4B-it`).
 
@@ -286,11 +292,12 @@ Swap models without code changes: set `LLM_MODEL` to a larger variant (e.g. `uns
 
 The build is structured in phases documented in [docs/](docs/):
 
-| Phase | Doc | Focus |
-|-------|-----|-------|
-| 1 | [phase-1-foundation.md](docs/phase-1-foundation.md) | FastAPI + pgvector + ingestion + basic RAG |
-| 1.2 | [phase-1.2-retrieval-quality.md](docs/phase-1.2-retrieval-quality.md) | Hybrid search, reranker, HyDE |
-| 2 | [phase-2-agents-memory.md](docs/phase-2-agents-memory.md) | LangGraph graph, memory system, triage |
-| 3 | [phase-3-context-rag.md](docs/phase-3-context-rag.md) | Context engineer, token budget, compression |
-| 4 | [phase-4-guardrails-routing.md](docs/phase-4-guardrails-routing.md) | Guardrail classifier, advanced routing |
-| 5 | [phase-5-observability-polish.md](docs/phase-5-observability-polish.md) | Langfuse, RAGAS evals, streaming polish |
+| Phase | Doc                                                                         | Focus                                                |
+| ----- | --------------------------------------------------------------------------- | ---------------------------------------------------- |
+| 1     | [phase-1-foundation.md](docs/phase-1-foundation.md)                         | FastAPI + pgvector + ingestion + basic RAG           |
+| 1.2   | [phase-1.2-retrieval-quality.md](docs/phase-1.2-retrieval-quality.md)       | Hybrid search, reranker, HyDE                        |
+| 2     | [phase-2-agents-memory.md](docs/phase-2-agents-memory.md)                   | LangGraph graph, memory system, triage               |
+| 3     | [phase-3-context-rag.md](docs/phase-3-context-rag.md)                       | Context engineer, token budget, compression          |
+| 3.2   | [phase-3.2-conversation-history.md](docs/phase-3.2-conversation-history.md) | Listable, persistent conversation history per client |
+| 4     | [phase-4-guardrails-routing.md](docs/phase-4-guardrails-routing.md)         | Guardrail classifier, advanced routing               |
+| 5     | [phase-5-observability-polish.md](docs/phase-5-observability-polish.md)     | Langfuse, RAGAS evals, streaming polish              |

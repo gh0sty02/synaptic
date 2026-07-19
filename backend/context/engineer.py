@@ -3,7 +3,6 @@ from typing import Any
 
 import tiktoken
 from langchain_core.documents import Document
-
 from optimiser import Optimiser
 
 ENCODING = tiktoken.get_encoding("cl100k_base")

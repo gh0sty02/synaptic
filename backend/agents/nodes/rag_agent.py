@@ -29,7 +29,11 @@ async def rag_agent(state: SynapticState) -> dict[str, Any]:
     )
     callbacks = state.get("callbacks", [])
     result = await rag_chain.ainvoke(
-        {"question": state["query"], "memory_context": bundle.memory_context},
+        {
+            "question": state["query"],
+            "memory_context": bundle.memory_context,
+            "use_hyde": state.get("use_hyde", False),
+        },
         config={"callbacks": callbacks},
     )
 

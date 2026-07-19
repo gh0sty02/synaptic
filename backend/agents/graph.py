@@ -32,6 +32,7 @@ class SynapticState(TypedDict):
     tool_results: list[dict[str, Any]]  # tool call outputs
     # Query reformulation — written by rag_agent; equals query when memory_context is empty
     condensed_query: str
+    use_hyde: bool
 
     # Token budget (phase 3 — initialised here, acted on later)
     token_counts: dict[str, int]

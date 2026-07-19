@@ -2,7 +2,7 @@ import asyncio
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langfuse import observe, get_client
+from langfuse import get_client, observe
 
 from agents.graph import SynapticState
 from constants import BEHAVIORAL_GUARDRAILS

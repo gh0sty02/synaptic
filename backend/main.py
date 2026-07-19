@@ -132,6 +132,7 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage]
     stream: bool = True
     session_id: str | None = None
+    use_hyde: bool = False
 
 
 class IngestRequest(BaseModel):
@@ -231,6 +232,7 @@ async def chat_completions(request: ChatCompletionRequest):
         "latency_ms": {},
         "langfuse_callbacks": [],
         "condensed_query": "",
+        "use_hyde": request.use_hyde,
     }
     config = {
         "configurable": {"thread_id": session_id},
