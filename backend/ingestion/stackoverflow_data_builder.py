@@ -98,6 +98,22 @@ class SODatasetBuilder:
         log.info("Built %d documents", len(docs))
         return docs
 
+    def eval_holdout_questions(self) -> list[dict[str, str]]:
+        eval_ids = (
+            line.strip()
+            for line in self.eval_ids_path.read_text().splitlines()
+            if line.strip()
+        )
+
+        df = pd.read_csv(self.data_path)
+
+        holdout_df = df[df["Id"].astype(str).isin(eval_ids)]
+
+        return [
+            {"Id": str(row["Id"]), "title": str(row["Title"])}
+            for _, row in holdout_df.iterrows()
+        ]
+
     @staticmethod
     def _strip_html(html: str) -> str:
         soup = BeautifulSoup(html, "html.parser")
