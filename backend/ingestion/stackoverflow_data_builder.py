@@ -3,11 +3,15 @@ import logging
 import warnings
 from pathlib import Path
 from typing import TypedDict
+from itertools import chain
 
 import pandas as pd
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 from langchain_core.documents import Document
 from tqdm import tqdm
+
+from ingestion.kaggle_so_adapter import load_kaggle_rows
+from ingestion.stackexchange_adapter import load_stackexchange_rows
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
@@ -22,6 +26,8 @@ log = logging.getLogger(__name__)
 
 DATA_PATH = Path(__file__).resolve().parents[2] / "dataset" / "train.csv"
 EVAL_IDS_PATH = Path(__file__).resolve().parents[2] / "dataset" / "eval_ids.txt"
+KAGGLE_DIR = Path(__file__).resolve().parents[2] / "dataset" / "kaggle"
+STACKEXCHANGE_DIR = Path(__file__).resolve().parents[2] / "dataset" / "stackexchange"
 
 
 # ── Types ─────────────────────────────────────────────────────────────────────
@@ -34,7 +40,8 @@ class DocumentMetadata(TypedDict):
     title: str
     body: str
     tags: list[str]
-    quality: str
+    quality: str | None
+    score: int
     created_at: str
 
 
@@ -52,6 +59,32 @@ class SODatasetBuilder:
     def build(self) -> list[Document]:
         train_df = self._load_and_filter()
         return self._build_documents(train_df)
+
+    def build_from_sources(
+        self, kaggle_dir: Path, stackexchange_dir: Path
+    ) -> list[Document]:
+        docs: list[Document] = []
+
+        for row in chain(
+            load_kaggle_rows(kaggle_dir), load_stackexchange_rows(stackexchange_dir)
+        ):
+            content = f"{row["title"]}\n\n{row['question_body']}\n\nAnswer:\n{row['answer_body']}"
+
+            metadata: DocumentMetadata = {
+                "source": "stackoverflow",
+                "doc_id": row["doc_id"],
+                "content_hash": self._content_hash(content),
+                "title": row["title"],
+                "body": row["question_body"],
+                "tags": row["tags"],
+                "quality": None,
+                "score": row["score"],
+                "created_at": row["created_at"],
+            }
+
+            docs.append(Document(page_content=content, metadata=metadata))
+
+        return docs
 
     def _load_and_filter(self) -> pd.DataFrame:
         log.info("Loading dataset from %s", self.data_path)
@@ -124,8 +157,3 @@ class SODatasetBuilder:
     @staticmethod
     def _content_hash(text: str) -> str:
         return hashlib.sha256(text.encode()).hexdigest()
-
-
-# print ls
-
-print("he")

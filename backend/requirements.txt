@@ -41,7 +41,7 @@ llmlingua>=0.2.0               # primary compressor; falls back to summary chain
 langfuse>=3.0.0                # LangChain CallbackHandler: from langfuse.langchain import CallbackHandler
 
 # ── Evals ─────────────────────────────────────────────────────────────────────
-ragas>=0.1.21                  # context_precision, context_recall, answer_relevancy
+ragas==0.4.3                    # pinned exact: 0.1.x metric names moved to ragas.metrics.collections in 0.4.x
 datasets>=2.20.0               # required by ragas
 
 # ── Data Processing / Ingestion ───────────────────────────────────────────────

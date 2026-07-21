@@ -14,6 +14,8 @@ from tqdm import tqdm
 from ingestion.stackoverflow_data_builder import (
     DATA_PATH,
     EVAL_IDS_PATH,
+    KAGGLE_DIR,
+    STACKEXCHANGE_DIR,
     DocumentMetadata,
     SODatasetBuilder,
 )
@@ -57,6 +59,7 @@ class IngestionPipeline:
         "quality",
         "created_at",
         "status",
+        "score",
     }
     _EXPECTED_CHUNKS_COLS = {
         "id",
@@ -182,8 +185,8 @@ class IngestionPipeline:
                 cur.executemany(
                     """
                     INSERT INTO documents
-                        (source, external_id, title, body, content_hash, tags, quality, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        (source, external_id, title, body, content_hash, tags, quality, score, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (content_hash) DO NOTHING
                     """,
                     [
@@ -195,6 +198,7 @@ class IngestionPipeline:
                             m["content_hash"],
                             m["tags"],
                             m["quality"],
+                            m["score"],
                             m["created_at"],
                         )
                         for m in metadatas
@@ -377,7 +381,9 @@ class IngestionPipeline:
 
 
 def main() -> None:
-    docs = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH).build()
+    docs = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH).build_from_sources(
+        kaggle_dir=KAGGLE_DIR, stackexchange_dir=STACKEXCHANGE_DIR
+    )
     IngestionPipeline(CONN_STR).run(docs)
 
 

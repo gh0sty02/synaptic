@@ -54,7 +54,7 @@ def _best_answers(
             except ValueError:
                 continue
 
-            if score <= MIN_ANSWER_SCORE:
+            if score < MIN_ANSWER_SCORE:
                 continue
 
             # get if a answer for this question already exists in the array
@@ -92,7 +92,7 @@ def load_kaggle_rows(kaggle_dir: Path) -> Iterator[KaggleRow]:
     for qid in surviving_ids:
         q, a = questions[qid], best_answers[qid]
 
-        yeild(
+        yield (
             KaggleRow(
                 doc_id=qid,
                 title=q["Title"],

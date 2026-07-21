@@ -1,3 +1,4 @@
+from __future__ import annotations
 import csv
 import glob
 import sys
@@ -25,7 +26,7 @@ class StackExchangeRow(TypedDict):
     created_at: str
 
 
-def _parse_tags(raw: str) -> list[load_stackexchange_rows]:
+def _parse_tags(raw: str) -> list[str]:
     return _TAG_RE.findall(raw)
 
 
