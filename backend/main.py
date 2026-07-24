@@ -23,11 +23,14 @@ import agents.nodes.memory_node as mem_module
 import agents.nodes.orchestrator as orch_module
 import agents.nodes.rag_agent as rag_agent_module
 import agents.nodes.writer_node as writer_module
-from agents.graph import REDIS_URL, SynapticState, graph_builder
+from agents.graph import REDIS_URL, graph_builder
+from agents.state import SynapticState
 from constants import SYSTEM_PROMPT
 from ingestion.stackoverflow_data_builder import (
     DATA_PATH,
     EVAL_IDS_PATH,
+    KAGGLE_DIR,
+    STACKEXCHANGE_DIR,
     SODatasetBuilder,
 )
 from ingestion.stackoverflow_loader import CONN_STR, EMBEDDING_MODEL, IngestionPipeline
@@ -189,7 +192,9 @@ def metrics():
 @app.post("/ingest")
 async def ingest(request: IngestRequest):
     def _run() -> int:
-        docs = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH).build()
+        docs = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH).build_from_sources(
+            kaggle_dir=KAGGLE_DIR, stackexchange_dir=STACKEXCHANGE_DIR
+        )
         if request.limit:
             docs = docs[: request.limit]
         IngestionPipeline(CONN_STR).run(docs)

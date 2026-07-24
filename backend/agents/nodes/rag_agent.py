@@ -4,7 +4,7 @@ from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langfuse import observe
 
-from agents.graph import SynapticState
+from agents.state import SynapticState
 from chain.rag_chain import RagChain
 from context.engineer import assemble
 

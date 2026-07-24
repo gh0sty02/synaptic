@@ -1,6 +1,6 @@
 from langfuse import observe
 
-from agents.graph import SynapticState
+from agents.state import SynapticState
 from memory.manager import MemoryManager
 
 memory_manager: MemoryManager = None

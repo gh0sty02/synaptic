@@ -4,7 +4,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse import get_client, observe
 
-from agents.graph import SynapticState
+from agents.state import SynapticState
 from constants import BEHAVIORAL_GUARDRAILS
 from context.engineer import assemble
 from llm import utility_llm

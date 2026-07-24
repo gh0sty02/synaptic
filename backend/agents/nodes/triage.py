@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse import observe
 from pydantic import BaseModel
 
-from agents.graph import SynapticState
+from agents.state import SynapticState
 from llm import utility_llm
 
 logger = logging.getLogger(__name__)

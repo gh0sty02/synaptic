@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import time
 import warnings
@@ -107,12 +108,18 @@ class IngestionPipeline:
             **newly_inserted_hash_to_doc_id_mapping,
             **resumable_hash_to_doc_id,
         }
-        doc_ids = list(content_hash_to_doc_id.values())
 
         if resume_docs:
             self._cleanup_partial_chunks(list(resumable_hash_to_doc_id.values()))
 
         texts, vectors, metadatas = self._embed(pending_docs, model)
+        texts, vectors, metadatas, invalid_doc_ids = self._drop_invalid_vectors(
+            texts, vectors, metadatas, content_hash_to_doc_id
+        )
+        if invalid_doc_ids:
+            self._mark_failed(invalid_doc_ids, "embedding produced NaN/Inf")
+
+        doc_ids = [content_hash_to_doc_id[m["content_hash"]] for m in metadatas]
 
         try:
             self._insert_chunks(texts, vectors, metadatas, content_hash_to_doc_id)
@@ -274,6 +281,42 @@ class IngestionPipeline:
         log.info("Done in %.1fs (%.1f docs/s)", elapsed, len(docs) / elapsed)
 
         return texts, vectors, metadatas
+
+    def _drop_invalid_vectors(
+        self,
+        texts: list[str],
+        vectors: list[list[float]],
+        metadatas: list[DocumentMetadata],
+        content_hash_to_doc_id: dict[str, int],
+    ) -> tuple[list[str], list[list[float]], list[DocumentMetadata], list[int]]:
+        """Drops any (text, vector, metadata) whose vector contains NaN/Inf.
+
+        pgvector rejects NaN/Inf outright, and COPY fails the entire batch on the
+        first bad row — without this, one degenerate embedding (seen with fp16
+        inference on an unusual input) aborts insertion for every row in that
+        chunk_size batch, discarding the whole embedding pass. Filtering here
+        means only the genuinely bad document(s) are lost, marked 'failed' with
+        a clear reason, instead of every pending document.
+        """
+        clean_texts, clean_vectors, clean_metadatas, invalid_doc_ids = [], [], [], []
+
+        for text, vector, meta in zip(texts, vectors, metadatas, strict=True):
+            if any(math.isnan(x) or math.isinf(x) for x in vector):
+                log.warning(
+                    "Dropping doc_id=%s (title=%r) — embedding contains NaN/Inf",
+                    meta["doc_id"],
+                    meta["title"][:80],
+                )
+                invalid_doc_ids.append(content_hash_to_doc_id[meta["content_hash"]])
+                continue
+            clean_texts.append(text)
+            clean_vectors.append(vector)
+            clean_metadatas.append(meta)
+
+        if invalid_doc_ids:
+            log.warning("Dropped %d documents with invalid embeddings", len(invalid_doc_ids))
+
+        return clean_texts, clean_vectors, clean_metadatas, invalid_doc_ids
 
     # ── Insert chunks ─────────────────────────────────────────────────────────
 

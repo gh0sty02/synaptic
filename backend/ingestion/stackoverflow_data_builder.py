@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import random
 import warnings
 from pathlib import Path
 from typing import TypedDict
@@ -60,14 +61,51 @@ class SODatasetBuilder:
         train_df = self._load_and_filter()
         return self._build_documents(train_df)
 
+    def sample_eval_holdout(self, stackexchange_dir: Path) -> set[str]:
+        """Samples eval holdout IDs from the StackExchange batch only and writes them to
+        eval_ids_path. Kaggle rows are never eligible — eval measures whether retrieval/
+        generation reflects current technical content, and Kaggle's 2008-2016 coverage
+        would test against stale question style, defeating that goal.
+
+        Must be called (and eval_ids_path must exist) BEFORE build_from_sources(), so the
+        holdout rows are excluded from ingestion — see _read_eval_ids/build_from_sources.
+        This is a deliberate one-off call, not something build_from_sources triggers
+        automatically: unlike the old build()/_load_and_filter(), which re-samples and
+        overwrites eval_ids_path as a side effect on every call, sampling here only ever
+        happens when this method is explicitly invoked.
+        """
+        rows = list(load_stackexchange_rows(stackexchange_dir))
+        rng = random.Random(self.EVAL_RANDOM_STATE)
+        holdout_ids = {row["doc_id"] for row in rng.sample(rows, k=self.EVAL_SAMPLE_N)}
+
+        self.eval_ids_path.write_text("\n".join(sorted(holdout_ids)) + "\n")
+        log.info("Saved %d eval IDs → %s", len(holdout_ids), self.eval_ids_path)
+        return holdout_ids
+
+    def _read_eval_ids(self) -> set[str]:
+        if not self.eval_ids_path.exists():
+            raise FileNotFoundError(
+                f"{self.eval_ids_path} does not exist — call sample_eval_holdout() first "
+                "so eval questions are excluded from ingestion, not the other way around."
+            )
+        return {
+            line.strip()
+            for line in self.eval_ids_path.read_text().splitlines()
+            if line.strip()
+        }
+
     def build_from_sources(
         self, kaggle_dir: Path, stackexchange_dir: Path
     ) -> list[Document]:
+        eval_ids = self._read_eval_ids()
         docs: list[Document] = []
 
         for row in chain(
             load_kaggle_rows(kaggle_dir), load_stackexchange_rows(stackexchange_dir)
         ):
+            if row["doc_id"] in eval_ids:
+                continue
+
             content = f"{row["title"]}\n\n{row['question_body']}\n\nAnswer:\n{row['answer_body']}"
 
             metadata: DocumentMetadata = {
@@ -131,20 +169,16 @@ class SODatasetBuilder:
         log.info("Built %d documents", len(docs))
         return docs
 
-    def eval_holdout_questions(self) -> list[dict[str, str]]:
-        eval_ids = (
-            line.strip()
-            for line in self.eval_ids_path.read_text().splitlines()
-            if line.strip()
-        )
-
-        df = pd.read_csv(self.data_path)
-
-        holdout_df = df[df["Id"].astype(str).isin(eval_ids)]
-
+    def eval_holdout_questions(self, stackexchange_dir: Path) -> list[dict[str, str]]:
+        """Returns the held-out eval questions with ground truth, sourced only from the
+        StackExchange batch (never Kaggle — see sample_eval_holdout). Each row's accepted
+        answer is included as `answer`, enabling reference-based ragas metrics.
+        """
+        eval_ids = self._read_eval_ids()
         return [
-            {"Id": str(row["Id"]), "title": str(row["Title"])}
-            for _, row in holdout_df.iterrows()
+            {"id": row["doc_id"], "title": row["title"], "answer": row["answer_body"]}
+            for row in load_stackexchange_rows(stackexchange_dir)
+            if row["doc_id"] in eval_ids
         ]
 
     @staticmethod

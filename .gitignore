@@ -1,6 +1,5 @@
 .venv/
 .claude/
-docs/
 learnings/
 __pycache__/
 *.pyc
@@ -12,3 +11,6 @@ CLAUDE.md
 .agents
 skills-lock.json
 data-gym-cache
+node-compile-cache/
+docs/
+.codex/
