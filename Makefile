@@ -49,3 +49,9 @@ lint:
 # Lint and auto-fix what ruff can fix
 lint-fix:
 	cd backend && ../.venv/bin/ruff check --fix .
+
+# Run the RAGAS eval suite against the held-out StackOverflow question set.
+# Override sample size: make eval SAMPLE_SIZE=1000
+SAMPLE_SIZE ?= 50
+eval:
+	cd backend && PYTHONPATH=$(PWD)/backend ../.venv/bin/python -m evals.ragas_runner --sample-size $(SAMPLE_SIZE)
