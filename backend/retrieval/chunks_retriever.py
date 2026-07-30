@@ -1,5 +1,5 @@
 import os
-from typing import Any, ClassVar
+from typing import Any
 
 import numpy as np
 import psycopg
@@ -9,7 +9,7 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_huggingface import HuggingFaceEmbeddings
 from pgvector.psycopg import register_vector, register_vector_async
 from pydantic import ConfigDict
-from sentence_transformers import CrossEncoder
+from retrieval.reranker import rerank
 
 load_dotenv()
 
@@ -42,13 +42,9 @@ class ChunksRetriever(BaseRetriever):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     embeddings: HuggingFaceEmbeddings
-    _encoder: ClassVar[CrossEncoder | None] = None
 
-    @classmethod
-    def _get_encoder(cls) -> CrossEncoder:
-        if cls._encoder is None:
-            cls._encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        return cls._encoder
+    rerank: bool = True
+
     conn_str: str
     k: int = 100
 
@@ -73,22 +69,11 @@ class ChunksRetriever(BaseRetriever):
                 (vec, _DISTANCE_CUTOFF, vec, self.k),
             ).fetchall()
 
-            print(rows)
+            docs: list[Document] = [
+                Document(page_content=r[0], metadata={"title": r[1]}) for r in rows
+            ]
 
-            re_ranked = self._get_encoder().predict([(query, row[0]) for row in rows])
-
-            scored = sorted(
-                zip(re_ranked, rows, strict=True), key=lambda x: x[0], reverse=True
-            )
-
-            top = [(score, r) for score, r in scored[:RETRIEVAL_TOP_K]]
-        return [
-            Document(
-                page_content=r[0],
-                metadata={"title": r[1], "relevance_score": float(score)},
-            )
-            for score, r in top
-        ]
+            return rerank(query, docs, RETRIEVAL_TOP_K) if self.rerank else docs
 
     async def _aget_relevant_documents(
         self, query: str, *, run_manager: Any
@@ -109,17 +94,7 @@ class ChunksRetriever(BaseRetriever):
             )
             rows = await cur.fetchall()
 
-            re_ranked = self._get_encoder().predict([(query, row[0]) for row in rows])
+            # structure of a document - [page_content ="", metadata=""]
+            docs = [Document(page_content=r[0], metadata={"title": r[1]}) for r in rows]
 
-            scored = sorted(
-                zip(re_ranked, rows, strict=True), key=lambda x: x[0], reverse=True
-            )
-
-            top = [(score, r) for score, r in scored[:RETRIEVAL_TOP_K]]
-        return [
-            Document(
-                page_content=r[0],
-                metadata={"title": r[1], "relevance_score": float(score)},
-            )
-            for score, r in top
-        ]
+            return rerank(query, docs, RETRIEVAL_TOP_K) if self.rerank else docs

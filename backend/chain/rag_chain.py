@@ -10,7 +10,9 @@ from constants import SYSTEM_PROMPT
 from context.engineer import AGENT_BUDGET, fit_chunks
 from ingestion.stackoverflow_loader import CONN_STR
 from llm import main_llm, utility_llm
+from retrieval.bm25_retriever import BM25Retriever
 from retrieval.chunks_retriever import ChunksRetriever
+from retrieval.hybrid import HybridRetriever
 from retrieval.hyde import generate_hypothetical_answer
 
 
@@ -41,11 +43,13 @@ _CONDENSATION_SYSTEM_PROMPT = (
 class RagChain:
     def __init__(self, embeddings: HuggingFaceEmbeddings) -> None:
         self.embeddings = embeddings
-        self.retriever = ChunksRetriever(
+        dense = ChunksRetriever(
             embeddings=self.embeddings,
             conn_str=CONN_STR,
-            k=5,
+            rerank=False,
         )
+        sparse = BM25Retriever(conn_str=CONN_STR)
+        self.retriever = HybridRetriever(dense=dense, sparse=sparse)
         self.prompt = self._build_prompt()
 
     def _build_prompt(self) -> ChatPromptTemplate:
