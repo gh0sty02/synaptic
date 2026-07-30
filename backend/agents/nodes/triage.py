@@ -1,10 +1,12 @@
-from pydantic import BaseModel
-from langchain_core.messages import SystemMessage, HumanMessage
-from typing import Any
-import re
 import logging
-from agents.graph import SynapticState
+import re
+from typing import Any
+
+from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse import observe
+from pydantic import BaseModel
+
+from agents.state import SynapticState
 from llm import utility_llm
 
 logger = logging.getLogger(__name__)

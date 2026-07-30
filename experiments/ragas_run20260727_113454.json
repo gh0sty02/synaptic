@@ -1,0 +1,12 @@
+{
+  "commit": "7347a70",
+  "sample_size": 20,
+  "hybrid_search_enabled": "true",
+  "scores": {
+    "faithfulness": NaN,
+    "answer_relevancy": 0.5842080704129963,
+    "llm_context_precision_without_reference": NaN,
+    "context_recall": 0.22916666666666666,
+    "answer_correctness": 0.15477838168250316
+  }
+}

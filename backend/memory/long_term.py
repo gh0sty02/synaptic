@@ -1,5 +1,6 @@
-import asyncpg
 from typing import Any
+
+import asyncpg
 
 
 class LongTermMemory:

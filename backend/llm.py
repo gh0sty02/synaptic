@@ -1,7 +1,10 @@
 import os
+
 from dotenv import load_dotenv
-from pydantic import SecretStr
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
+
+from context.budgets import RESERVED_OUTPUT_TOKENS
 
 load_dotenv()
 
@@ -16,6 +19,7 @@ main_llm = ChatOpenAI(
     api_key=SecretStr(_API_KEY),
     temperature=1.0,
     top_p=0.95,
+    max_tokens=RESERVED_OUTPUT_TOKENS,
 )
 
 # Used by: Triage, Orchestrator, RagChain (condensation), MemoryManager (summarisation)

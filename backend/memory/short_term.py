@@ -1,16 +1,22 @@
 import json
-import tiktoken
-import redis.asyncio as aioredis
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
+
+import redis.asyncio as aioredis
+import tiktoken
+
+from context.engineer import AGENT_BUDGET
 
 ENCODING = tiktoken.get_encoding("cl100k_base")
 
 
 class ShortTermMemory:
-    MAX_TURNS = 10       # pairs → up to 20 list entries
+    MAX_TURNS = 30       # pairs → up to 60 list entries; TOKEN_BUDGET is the real ceiling
     TTL_SECONDS = 86400  # 24-hour inactivity window (ARCHITECTURE.md §5.3)
-    TOKEN_BUDGET = 2000  # soft limit; oldest pairs dropped first if exceeded
+    # Soft limit; oldest pairs dropped first if exceeded. Must satisfy the
+    # smallest per-agent short_term_memory cap in AGENT_BUDGET, since this
+    # memory is loaded once before the graph routes to a specific agent.
+    TOKEN_BUDGET = min(b["short_term_memory"] for b in AGENT_BUDGET.values())
 
     def __init__(self, redis_client: aioredis.Redis) -> None:
         self._r = redis_client
@@ -31,7 +37,7 @@ class ShortTermMemory:
         entry = json.dumps({
             "role":      role,
             "content":   content,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "agent":     agent,
         })
         async with self._r.pipeline() as pipe:

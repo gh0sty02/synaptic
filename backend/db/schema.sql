@@ -82,3 +82,6 @@ CREATE INDEX IF NOT EXISTS memory_summaries_embedding_idx
 
 CREATE INDEX IF NOT EXISTS memory_summaries_session_idx
     ON memory_summaries (session_id, created_at);
+
+
+ALTER TABLE documents ADD COLUMN score INTEGER;

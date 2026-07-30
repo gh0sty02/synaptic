@@ -1,7 +1,7 @@
-import asyncio
-from agents.graph import SynapticState
-from memory.manager import MemoryManager
 from langfuse import observe
+
+from agents.state import SynapticState
+from memory.manager import MemoryManager
 
 memory_manager: MemoryManager = None
 

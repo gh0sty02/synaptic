@@ -1,18 +1,23 @@
-from dotenv import load_dotenv
 import json
 import logging
+import math
 import os
-import warnings
 import time
+import warnings
+
 import psycopg
 from bs4 import XMLParsedAsHTMLWarning
-from tqdm import tqdm
+from dotenv import load_dotenv
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
+from tqdm import tqdm
+
 from ingestion.stackoverflow_data_builder import (
-    DocumentMetadata,
     DATA_PATH,
     EVAL_IDS_PATH,
+    KAGGLE_DIR,
+    STACKEXCHANGE_DIR,
+    DocumentMetadata,
     SODatasetBuilder,
 )
 
@@ -55,6 +60,7 @@ class IngestionPipeline:
         "quality",
         "created_at",
         "status",
+        "score",
     }
     _EXPECTED_CHUNKS_COLS = {
         "id",
@@ -102,12 +108,18 @@ class IngestionPipeline:
             **newly_inserted_hash_to_doc_id_mapping,
             **resumable_hash_to_doc_id,
         }
-        doc_ids = list(content_hash_to_doc_id.values())
 
         if resume_docs:
             self._cleanup_partial_chunks(list(resumable_hash_to_doc_id.values()))
 
         texts, vectors, metadatas = self._embed(pending_docs, model)
+        texts, vectors, metadatas, invalid_doc_ids = self._drop_invalid_vectors(
+            texts, vectors, metadatas, content_hash_to_doc_id
+        )
+        if invalid_doc_ids:
+            self._mark_failed(invalid_doc_ids, "embedding produced NaN/Inf")
+
+        doc_ids = [content_hash_to_doc_id[m["content_hash"]] for m in metadatas]
 
         try:
             self._insert_chunks(texts, vectors, metadatas, content_hash_to_doc_id)
@@ -180,8 +192,8 @@ class IngestionPipeline:
                 cur.executemany(
                     """
                     INSERT INTO documents
-                        (source, external_id, title, body, content_hash, tags, quality, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        (source, external_id, title, body, content_hash, tags, quality, score, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (content_hash) DO NOTHING
                     """,
                     [
@@ -193,6 +205,7 @@ class IngestionPipeline:
                             m["content_hash"],
                             m["tags"],
                             m["quality"],
+                            m["score"],
                             m["created_at"],
                         )
                         for m in metadatas
@@ -269,6 +282,42 @@ class IngestionPipeline:
 
         return texts, vectors, metadatas
 
+    def _drop_invalid_vectors(
+        self,
+        texts: list[str],
+        vectors: list[list[float]],
+        metadatas: list[DocumentMetadata],
+        content_hash_to_doc_id: dict[str, int],
+    ) -> tuple[list[str], list[list[float]], list[DocumentMetadata], list[int]]:
+        """Drops any (text, vector, metadata) whose vector contains NaN/Inf.
+
+        pgvector rejects NaN/Inf outright, and COPY fails the entire batch on the
+        first bad row — without this, one degenerate embedding (seen with fp16
+        inference on an unusual input) aborts insertion for every row in that
+        chunk_size batch, discarding the whole embedding pass. Filtering here
+        means only the genuinely bad document(s) are lost, marked 'failed' with
+        a clear reason, instead of every pending document.
+        """
+        clean_texts, clean_vectors, clean_metadatas, invalid_doc_ids = [], [], [], []
+
+        for text, vector, meta in zip(texts, vectors, metadatas, strict=True):
+            if any(math.isnan(x) or math.isinf(x) for x in vector):
+                log.warning(
+                    "Dropping doc_id=%s (title=%r) — embedding contains NaN/Inf",
+                    meta["doc_id"],
+                    meta["title"][:80],
+                )
+                invalid_doc_ids.append(content_hash_to_doc_id[meta["content_hash"]])
+                continue
+            clean_texts.append(text)
+            clean_vectors.append(vector)
+            clean_metadatas.append(meta)
+
+        if invalid_doc_ids:
+            log.warning("Dropped %d documents with invalid embeddings", len(invalid_doc_ids))
+
+        return clean_texts, clean_vectors, clean_metadatas, invalid_doc_ids
+
     # ── Insert chunks ─────────────────────────────────────────────────────────
 
     def _insert_chunks(
@@ -300,6 +349,7 @@ class IngestionPipeline:
                             texts[batch_slice],
                             vectors[batch_slice],
                             metadatas[batch_slice],
+                            strict=True,
                         ):
                             copy.write_row(
                                 (
@@ -374,7 +424,9 @@ class IngestionPipeline:
 
 
 def main() -> None:
-    docs = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH).build()
+    docs = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH).build_from_sources(
+        kaggle_dir=KAGGLE_DIR, stackexchange_dir=STACKEXCHANGE_DIR
+    )
     IngestionPipeline(CONN_STR).run(docs)
 
 

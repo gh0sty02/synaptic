@@ -1,46 +1,48 @@
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-from llm import utility_llm
-from pydantic import BaseModel
-from typing import Literal, Optional
-import time
-import uuid
-import json
-import os
 import asyncio
+import json
 import logging
 import re
-from ingestion.stackoverflow_loader import IngestionPipeline
+import time
+import uuid
+from contextlib import asynccontextmanager
+from typing import Literal
 
-import redis.asyncio as aioredis
 import asyncpg
+import redis.asyncio as aioredis
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from langchain_huggingface import HuggingFaceEmbeddings
-from langfuse.langchain import CallbackHandler
 from langfuse import get_client
+from langfuse.langchain import CallbackHandler
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from openai import APIConnectionError
+from pydantic import BaseModel
 
-from agents.graph import graph_builder, SynapticState, REDIS_URL
-from memory.short_term import ShortTermMemory
-from memory.long_term import LongTermMemory
-from memory.manager import MemoryManager
-from ingestion.stackoverflow_loader import EMBEDDING_MODEL, CONN_STR
+import agents.nodes.memory_node as mem_module
+import agents.nodes.orchestrator as orch_module
+import agents.nodes.rag_agent as rag_agent_module
+import agents.nodes.writer_node as writer_module
+from agents.graph import REDIS_URL, graph_builder
+from agents.state import SynapticState
+from constants import SYSTEM_PROMPT
 from ingestion.stackoverflow_data_builder import (
-    SODatasetBuilder,
     DATA_PATH,
     EVAL_IDS_PATH,
+    KAGGLE_DIR,
+    STACKEXCHANGE_DIR,
+    SODatasetBuilder,
 )
-from constants import SYSTEM_PROMPT
-import agents.nodes.orchestrator as orch_module
-import agents.nodes.memory_node as mem_module
-import agents.nodes.writer_node as writer_module
-import agents.nodes.rag_agent as rag_agent_module
+from ingestion.stackoverflow_loader import CONN_STR, EMBEDDING_MODEL, IngestionPipeline
+from llm import utility_llm
+from memory.long_term import LongTermMemory
+from memory.manager import MemoryManager
+from memory.short_term import ShortTermMemory
+from retrieval.bm25_retriever import BM25Retriever
 
 logger = logging.getLogger(__name__)
 app_graph = None
-memory_manager: Optional[MemoryManager] = None
+memory_manager: MemoryManager | None = None
 _metrics: dict[str, float] = {
     "total_queries": 0,
     "total_errors": 0,
@@ -68,7 +70,7 @@ def chat_completion_chunk(
     created_at: int,
     model: str,
     delta: dict,
-    finish_reason: Optional[str] = None,
+    finish_reason: str | None = None,
 ) -> str:
     return f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_at, 'model': model, 'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish_reason}]})}\n\n"
 
@@ -98,6 +100,11 @@ async def lifespan(application: FastAPI):
 
     _embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     rag_agent_module.init(_embeddings)
+
+    # Build the BM25 index eagerly at startup instead of on the first query -
+    # _bm25/_corpus are ClassVar, shared by every BM25Retriever instance, so this
+    # warms the same cache the hybrid retriever's sparse retriever reads from.
+    BM25Retriever(conn_str=CONN_STR)._load_index()
 
     async def embed_fn(text: str) -> list[float]:
         loop = asyncio.get_event_loop()
@@ -133,7 +140,8 @@ class ChatCompletionRequest(BaseModel):
     model: str
     messages: list[ChatMessage]
     stream: bool = True
-    session_id: Optional[str] = None
+    session_id: str | None = None
+    use_hyde: bool = False
 
 
 class IngestRequest(BaseModel):
@@ -190,7 +198,9 @@ def metrics():
 @app.post("/ingest")
 async def ingest(request: IngestRequest):
     def _run() -> int:
-        docs = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH).build()
+        docs = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH).build_from_sources(
+            kaggle_dir=KAGGLE_DIR, stackexchange_dir=STACKEXCHANGE_DIR
+        )
         if request.limit:
             docs = docs[: request.limit]
         IngestionPipeline(CONN_STR).run(docs)
@@ -233,6 +243,7 @@ async def chat_completions(request: ChatCompletionRequest):
         "latency_ms": {},
         "langfuse_callbacks": [],
         "condensed_query": "",
+        "use_hyde": request.use_hyde,
     }
     config = {
         "configurable": {"thread_id": session_id},
