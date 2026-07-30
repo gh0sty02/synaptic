@@ -38,6 +38,7 @@ from llm import utility_llm
 from memory.long_term import LongTermMemory
 from memory.manager import MemoryManager
 from memory.short_term import ShortTermMemory
+from retrieval.bm25_retriever import BM25Retriever
 
 logger = logging.getLogger(__name__)
 app_graph = None
@@ -99,6 +100,11 @@ async def lifespan(application: FastAPI):
 
     _embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     rag_agent_module.init(_embeddings)
+
+    # Build the BM25 index eagerly at startup instead of on the first query -
+    # _bm25/_corpus are ClassVar, shared by every BM25Retriever instance, so this
+    # warms the same cache the hybrid retriever's sparse retriever reads from.
+    BM25Retriever(conn_str=CONN_STR)._load_index()
 
     async def embed_fn(text: str) -> list[float]:
         loop = asyncio.get_event_loop()
