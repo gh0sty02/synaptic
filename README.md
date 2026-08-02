@@ -12,8 +12,6 @@ Synaptic answers questions grounded in an answer-bearing Stack Overflow knowledg
 
 Everything runs against a local, OpenAI-compatible model endpoint — no data leaves the machine.
 
-> A cricket-match knowledge base was originally planned as a second domain; it's been dropped from scope entirely (see [`docs/phase-4.5/README.md`](docs/phase-4.5/README.md)). Synaptic is Stack Overflow-only going forward.
-
 ---
 
 ## Architecture
@@ -137,7 +135,7 @@ psql "$CONN_STR" -f backend/db/schema.sql
 
 ### 5. Ingest data
 
-Place the source CSVs under `dataset/kaggle/` and `dataset/stackexchange/` (see [`docs/DATASET.md`](docs/DATASET.md)), then:
+Place the source CSVs under `dataset/kaggle/` and `dataset/stackexchange/`, then:
 
 ```bash
 curl -X POST http://localhost:8000/ingest \
@@ -212,18 +210,12 @@ synaptic/
 │   ├── app/                      # Next.js app router
 │   └── components/               # Chat UI (shadcn/radix)
 ├── dataset/                      # Source CSVs (not committed)
-├── experiments/                  # Retrieval experiment results
-└── docs/
-    ├── ARCHITECTURE.md
-    ├── DATASET.md
-    └── phase-1 through phase-9   # Build-phase specs, status, and plans
+└── experiments/                  # Retrieval experiment results
 ```
 
 ---
 
 ## Roadmap
-
-Full detail per phase lives under [`docs/`](docs) — each `phase-N/README.md` tracks its own progress checklist.
 
 | Phase | Focus                                                              | Status                    |
 | ----- | ------------------------------------------------------------------- | -------------------------- |
