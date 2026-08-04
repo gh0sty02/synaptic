@@ -27,7 +27,9 @@ from ingestion.stackoverflow_data_builder import (
     STACKEXCHANGE_DIR,
     SODatasetBuilder,
 )
-from llm import utility_llm
+from ingestion.stackoverflow_loader import CONN_STR
+from llm import judge_llm
+from retrieval.chunks_retriever import ChunksRetriever
 
 REPORT_DIR = Path(__file__).resolve().parents[2] / "experiments"
 
@@ -67,12 +69,17 @@ def _get_commit_hash() -> str:
     ).strip()
 
 
-async def main(sample_size: int) -> None:
+async def main(sample_size: int, dense_only: bool) -> None:
     builder = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH)
     questions = builder.eval_holdout_questions(STACKEXCHANGE_DIR)[:sample_size]
 
     embeddings = HuggingFaceEmbeddings(model=os.environ["EMBEDDING_MODEL"])
-    rag_chain = RagChain(embeddings).build()
+    rag_chain_builder = RagChain(embeddings)
+    if dense_only:
+        rag_chain_builder.retriever = ChunksRetriever(
+            embeddings=embeddings, conn_str=CONN_STR, rerank=True
+        )
+    rag_chain = rag_chain_builder.build()
 
     rows = await _run_pipeline(rag_chain=rag_chain, questions=questions)
 
@@ -87,7 +94,7 @@ async def main(sample_size: int) -> None:
             LLMContextRecall(),
             AnswerCorrectness(),
         ],
-        llm=LangchainLLMWrapper(utility_llm),
+        llm=LangchainLLMWrapper(judge_llm),
         embeddings=embeddings,
         run_config=RunConfig(max_workers=2, timeout=300),
     )
@@ -103,9 +110,7 @@ async def main(sample_size: int) -> None:
             {
                 "commit": _get_commit_hash(),
                 "sample_size": sample_size,
-                "hybrid_search_enabled": os.environ.get(
-                    "HYBRID_SEARCH_ENABLED", "false"
-                ),
+                "hybrid_search_enabled": "false" if dense_only else "true",
                 "scores": result.to_pandas().mean(numeric_only=True).to_dict(),
             },
             indent=2,
@@ -122,5 +127,10 @@ if __name__ == "__main__":
         default=50,
         help="Number of held-out questions to evaluate (default 50; full set is 1000)",
     )
+    parser.add_argument(
+        "--dense-only",
+        action="store_true",
+        help="Bypass hybrid retrieval, use ChunksRetriever directly (dense-vs-hybrid comparison)",
+    )
     args = parser.parse_args()
-    asyncio.run(main(args.sample_size))
+    asyncio.run(main(args.sample_size, args.dense_only))

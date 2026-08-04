@@ -95,6 +95,8 @@ class ChunksRetriever(BaseRetriever):
             rows = await cur.fetchall()
 
             # structure of a document - [page_content ="", metadata=""]
-            docs = [Document(page_content=r[0], metadata={"title": r[1]}) for r in rows]
+            docs = [
+                Document(page_content=r[0], metadata={"title": r[1]}) for r in rows
+            ]
 
             return rerank(query, docs, RETRIEVAL_TOP_K) if self.rerank else docs

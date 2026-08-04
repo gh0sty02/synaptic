@@ -1,5 +1,4 @@
 import asyncio
-import os
 from typing import Any
 
 from dotenv import load_dotenv
@@ -13,21 +12,14 @@ from retrieval.reranker import rerank
 
 load_dotenv()
 
-RRF_K = int(os.environ.get("RRF_k", "60"))
 
-
-def reciprocal_rank_fusion(
-    result_lists: list[list[Document]], *, k: int = RRF_K
+def merge_candidates(
+    dense_docs: list[Document], sparse_docs: list[Document]
 ) -> list[Document]:
-    ranked: dict[str, tuple[float, Document]] = {}
-
-    for results in result_lists:
-        for rank, doc in enumerate(results, start=1):
-            prev_score, kept_doc = ranked.get(doc.page_content, (0.0, doc))
-            ranked[doc.page_content] = (prev_score + 1.0 / (k + rank), kept_doc)
-
-    fused = sorted(ranked.values(), key=lambda entry: entry[0], reverse=True)
-    return [doc for _, doc in fused]
+    merged: dict[str, Document] = {}
+    for doc in dense_docs + sparse_docs:
+        merged.setdefault(doc.page_content, doc)
+    return list(merged.values())
 
 
 class HybridRetriever(BaseRetriever):
@@ -46,7 +38,7 @@ class HybridRetriever(BaseRetriever):
             self.dense.ainvoke(query), self.sparse.ainvoke(query)
         )
 
-        fused = reciprocal_rank_fusion([dense_docs, sparse_docs])
+        fused = merge_candidates(dense_docs, sparse_docs)
 
         return rerank(query, fused, self.top_n)
 
