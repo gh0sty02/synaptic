@@ -50,7 +50,7 @@ graph.set_entry_point("guardrail")
 
 # when guardrail is hit, we run route_after_guardrail which checks the state for guardrail errors, if yes, we move to blocked ie blocked node else triage node
 graph.add_conditional_edges(
-    "guardrail", route_after_guardrail, {"blocked": "blocked", "triage": "traiage"}
+    "guardrail", route_after_guardrail, {"blocked": "blocked", "triage": "triage"}
 )
 
 graph.add_conditional_edges(

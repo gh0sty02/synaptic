@@ -32,12 +32,12 @@ async def guardrail_node(state: SynapticState) -> dict[str, Any]:
             reason="Guardrail classifier failed; blocking as precaution",
         )
 
-        get_client().update_current_span(
-            metadata={
-                "blocked": verdict.blocked,
-                "category": verdict.category,
-                "reason": verdict.reason,
-            }
-        )
+    get_client().update_current_span(
+        metadata={
+            "blocked": verdict.blocked,
+            "category": verdict.category,
+            "reason": verdict.reason,
+        }
+    )
 
     return {"guardrail_verdict": verdict.model_dump() if verdict.blocked else None}
