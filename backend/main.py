@@ -33,6 +33,7 @@ from ingestion.stackoverflow_data_builder import (
     STACKEXCHANGE_DIR,
     SODatasetBuilder,
 )
+from guardrails.classifier import OUTPUT_CHECK_WINDOW_CHARS, guardrail_classifier
 from ingestion.stackoverflow_loader import CONN_STR, EMBEDDING_MODEL, IngestionPipeline
 from llm import utility_llm
 from memory.long_term import LongTermMemory
@@ -253,6 +254,8 @@ async def chat_completions(request: ChatCompletionRequest):
     async def generate():
         start = time.monotonic()
         got_tokens = False
+        checked_up_to = 0
+        full_answer = ""
 
         try:
             # Role announcement — required by OpenAI SDK before any content
@@ -275,9 +278,40 @@ async def chat_completions(request: ChatCompletionRequest):
 
                     if delta:
                         got_tokens = True
+                        full_answer += delta
                         yield chat_completion_chunk(
                             completion_id, created_at, request.model, {"content": delta}
                         )
+
+                        if (
+                            len(full_answer) - checked_up_to
+                            >= OUTPUT_CHECK_WINDOW_CHARS
+                        ):
+                            checked_up_to = len(full_answer)
+                            verdict = await guardrail_classifier.check_output(
+                                full_answer, config={"callbacks": [langfuse_handler]}
+                            )
+
+                            if verdict.blocked:
+                                yield chat_completion_chunk(
+                                    completion_id,
+                                    created_at,
+                                    request.model,
+                                    {
+                                        "content": "\n\n[Response retracted : policy violation detected]"
+                                    },
+                                )
+
+                                yield chat_completion_chunk(
+                                    completion_id,
+                                    created_at,
+                                    request.model,
+                                    {},
+                                    finish_reason="content_filter",
+                                )
+
+                                yield stream_done()
+                                return
 
                 # blocked_node never calls an LLM, so it never emits a tagged token
                 # event - this catches its static refusal as a single chunk instead

@@ -2,7 +2,8 @@ import logging
 from typing import Any
 
 
-from langfuse import observe
+from langfuse import get_client, observe
+
 
 from agents.state import SynapticState
 from guardrails.classifier import GuardrailVerdict, guardrail_classifier
@@ -29,6 +30,14 @@ async def guardrail_node(state: SynapticState) -> dict[str, Any]:
             blocked=True,
             category="classifier_error",
             reason="Guardrail classifier failed; blocking as precaution",
+        )
+
+        get_client().update_current_span(
+            metadata={
+                "blocked": verdict.blocked,
+                "category": verdict.category,
+                "reason": verdict.reason,
+            }
         )
 
     return {"guardrail_verdict": verdict.model_dump() if verdict.blocked else None}
