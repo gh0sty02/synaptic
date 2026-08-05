@@ -87,7 +87,9 @@ class RagChain:
     def build(self) -> Any:
         _NO_CONTEXT_REPLY = "I couldn't find relevant information for your question."
         _condensation_chain = self._build_condensation_chain()
-        _llm_chain = self.prompt | main_llm | StrOutputParser()
+        _llm_chain = (self.prompt | main_llm | StrOutputParser()).with_config(
+            {"tags": ["final_answer"]}
+        )
 
         async def _condense(inputs: _RagPipelineState) -> _RagPipelineState:
             if not inputs.get("memory_context", "").strip():

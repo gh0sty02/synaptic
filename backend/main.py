@@ -252,6 +252,8 @@ async def chat_completions(request: ChatCompletionRequest):
 
     async def generate():
         start = time.monotonic()
+        got_tokens = False
+
         try:
             # Role announcement — required by OpenAI SDK before any content
             yield chat_completion_chunk(
@@ -261,19 +263,43 @@ async def chat_completions(request: ChatCompletionRequest):
                 {"role": "assistant", "content": ""},
             )
 
-            result = await app_graph.ainvoke(initial_state, config=config)
+            async for event in app_graph.astream_events(
+                initial_state, config=config, version="v2"
+            ):
+                kind = event["event"]
+
+                if kind == "on_chat_model_stream" and "final_answer" in event.get(
+                    "tags", []
+                ):
+                    delta = event["data"]["chunk"].content
+
+                    if delta:
+                        got_tokens = True
+                        yield chat_completion_chunk(
+                            completion_id, created_at, request.model, {"content": delta}
+                        )
+
+                # blocked_node never calls an LLM, so it never emits a tagged token
+                # event - this catches its static refusal as a single chunk instead
+                elif (
+                    kind == "on_chain_end"
+                    and event.get("metadata", {}).get("langgraph_node") == "blocked"
+                    and not got_tokens
+                ):
+                    refusal = (event["data"].get("output") or {}).get(
+                        "final_answer", ""
+                    )
+                    if refusal:
+                        yield chat_completion_chunk(
+                            completion_id,
+                            created_at,
+                            request.model,
+                            {"content": refusal},
+                        )
+
             elapsed_ms = (time.monotonic() - start) * 1000
             _metrics["total_queries"] += 1
             _metrics["_latency_sum_ms"] += elapsed_ms
-            answer = result.get("final_answer", "")
-
-            if answer:
-                yield chat_completion_chunk(
-                    completion_id,
-                    created_at,
-                    request.model,
-                    {"content": answer},
-                )
 
             yield chat_completion_chunk(
                 completion_id,

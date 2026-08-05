@@ -7,7 +7,7 @@ from langfuse import get_client, observe
 from agents.state import SynapticState
 from constants import BEHAVIORAL_GUARDRAILS
 from context.engineer import assemble
-from llm import utility_llm
+from llm import main_llm
 from memory.manager import MemoryManager
 
 from . import rag_agent as _rag_agent
@@ -41,12 +41,12 @@ class Orchestrator:
         if long_term:
             context += f"\n\nOlder session summaries:\n{long_term}"
 
-        response = await utility_llm.ainvoke(
+        response = await main_llm.ainvoke(
             [
                 SystemMessage(content=ORCHESTRATOR_PROMPT),
                 HumanMessage(content=f"{context}\n\nUser question: {query}"),
             ],
-            config={"callbacks": callbacks},
+            config={"callbacks": callbacks, "tags": ["final_answer"]},
         )
         return response.content
 

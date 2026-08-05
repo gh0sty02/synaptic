@@ -16,7 +16,7 @@ _EVAL_MODEL = os.environ["EVAL_MODEL"]
 _EVAL_MODEL_BASE_URL = os.environ["EVAL_MODEL_BASE_URL"]
 _EVAL_MODEL_API_KEY = os.environ["EVAL_MODEL_API_KEY"]
 
-# Used by: RagChain (final answer generation)
+# Used by: RagChain (final answer generation), Orchestrator (multi-intent merge)
 main_llm = ChatOpenAI(
     model=_MODEL,
     base_url=_BASE_URL,
@@ -26,7 +26,7 @@ main_llm = ChatOpenAI(
     max_tokens=RESERVED_OUTPUT_TOKENS,
 )
 
-# Used by: Triage, Orchestrator, RagChain (condensation), MemoryManager (summarisation),
+# Used by: Triage, RagChain (condensation), MemoryManager (summarisation),
 # ragas eval judge prompts. Low temperature — these are classification/format-constrained
 # tasks, not creative generation, and high temp was causing ragas judge output to drift
 # out of the expected JSON schema (RagasOutputParserException).
