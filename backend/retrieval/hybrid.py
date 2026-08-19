@@ -6,7 +6,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict
 
-from retrieval.bm25_retriever import BM25Retriever
+from retrieval.fulltext_retriever import FullTextRetriever
 from retrieval.chunks_retriever import RETRIEVAL_TOP_K, ChunksRetriever
 from retrieval.reranker import rerank
 
@@ -27,7 +27,7 @@ class HybridRetriever(BaseRetriever):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     dense: ChunksRetriever
-    sparse: BM25Retriever
+    sparse: FullTextRetriever
 
     top_n: int = RETRIEVAL_TOP_K
 
@@ -40,7 +40,7 @@ class HybridRetriever(BaseRetriever):
 
         fused = merge_candidates(dense_docs, sparse_docs)
 
-        return rerank(query, fused, self.top_n)
+        return await asyncio.to_thread(rerank, query, fused, self.top_n)
 
     def _get_relevant_documents(
         self, query: str, *, run_manager: Any

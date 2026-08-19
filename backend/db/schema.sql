@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     chunk_index       INT         NOT NULL DEFAULT 0,
     content           TEXT        NOT NULL,
     content_hash      TEXT        NOT NULL UNIQUE,
+    content_pretokenized    TEXT,
     embedding         vector(768),
     embedding_model   TEXT        NOT NULL,
     embedding_version TEXT        NOT NULL,
@@ -52,8 +53,16 @@ CREATE TABLE IF NOT EXISTS chunks (
     UNIQUE (document_id, chunk_index)
 );
 
+
+ALTER TABLE chunks ADD COLUMN IF NOT EXISTS content_tsv tsvector
+    GENERATED ALWAYS AS (to_tsvector('simple', coalesce(content_pretokenized, ''))) STORED;
+
 CREATE INDEX IF NOT EXISTS idx_chunks_document_id
     ON chunks (document_id);
+
+    
+CREATE INDEX IF NOT EXISTS idx_chunks_content_tsv
+    ON chunks USING GIN (content_tsv);
 
 -- content_hash index is implicit from the UNIQUE constraint above
 

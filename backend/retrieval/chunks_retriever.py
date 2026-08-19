@@ -1,3 +1,4 @@
+import asyncio
 import os
 from typing import Any
 
@@ -48,14 +49,11 @@ class ChunksRetriever(BaseRetriever):
     conn_str: str
     k: int = 100
 
-    def _pg_dsn(self) -> str:
-        return self.conn_str.replace("postgresql+psycopg://", "postgresql://", 1)
-
     def _get_relevant_documents(
         self, query: str, *, run_manager: Any
     ) -> list[Document]:
         vec = np.array(self.embeddings.embed_query(query))
-        with psycopg.connect(self._pg_dsn()) as conn:
+        with psycopg.connect(self.conn_str) as conn:
             register_vector(conn)
             rows = conn.execute(
                 """
@@ -78,8 +76,8 @@ class ChunksRetriever(BaseRetriever):
     async def _aget_relevant_documents(
         self, query: str, *, run_manager: Any
     ) -> list[Document]:
-        vec = np.array(self.embeddings.embed_query(query))
-        async with await psycopg.AsyncConnection.connect(self._pg_dsn()) as conn:
+        vec = np.array(await asyncio.to_thread(self.embeddings.embed_query, query))
+        async with await psycopg.AsyncConnection.connect(self.conn_str) as conn:
             await register_vector_async(conn)
             cur = await conn.execute(
                 """
@@ -99,4 +97,6 @@ class ChunksRetriever(BaseRetriever):
                 Document(page_content=r[0], metadata={"title": r[1]}) for r in rows
             ]
 
-            return rerank(query, docs, RETRIEVAL_TOP_K) if self.rerank else docs
+            if not self.rerank:
+                return docs
+            return await asyncio.to_thread(rerank, query, docs, RETRIEVAL_TOP_K)

@@ -36,10 +36,11 @@ from ingestion.stackoverflow_data_builder import (
 from guardrails.classifier import OUTPUT_CHECK_WINDOW_CHARS, guardrail_classifier
 from ingestion.stackoverflow_loader import CONN_STR, EMBEDDING_MODEL, IngestionPipeline
 from llm import utility_llm
+from retrieval import reranker
 from memory.long_term import LongTermMemory
 from memory.manager import MemoryManager
 from memory.short_term import ShortTermMemory
-from retrieval.bm25_retriever import BM25Retriever
+from retrieval.fulltext_retriever import FullTextRetriever
 
 logger = logging.getLogger(__name__)
 app_graph = None
@@ -94,18 +95,15 @@ async def lifespan(application: FastAPI):
     global app_graph, memory_manager
 
     redis_client = aioredis.from_url(REDIS_URL)
-    db_url = CONN_STR.replace("postgresql+psycopg2://", "postgresql://").replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+    db_url = CONN_STR
     db_pool = await asyncpg.create_pool(db_url)
 
     _embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     rag_agent_module.init(_embeddings)
 
-    # Build the BM25 index eagerly at startup instead of on the first query -
-    # _bm25/_corpus are ClassVar, shared by every BM25Retriever instance, so this
-    # warms the same cache the hybrid retriever's sparse retriever reads from.
-    BM25Retriever(conn_str=CONN_STR)._load_index()
+    # Loads the CrossEncoder weights immediately instead of on the first rerank()
+    # call, so the first real query doesn't pay the model-load latency.
+    reranker.preload()
 
     async def embed_fn(text: str) -> list[float]:
         loop = asyncio.get_event_loop()
@@ -313,22 +311,27 @@ async def chat_completions(request: ChatCompletionRequest):
                                 yield stream_done()
                                 return
 
-                # blocked_node never calls an LLM, so it never emits a tagged token
-                # event - this catches its static refusal as a single chunk instead
-                elif (
-                    kind == "on_chain_end"
-                    and event.get("metadata", {}).get("langgraph_node") == "blocked"
-                    and not got_tokens
-                ):
-                    refusal = (event["data"].get("output") or {}).get(
-                        "final_answer", ""
+                # Some nodes set final_answer without ever calling an LLM - blocked_node's
+                # static refusal, and rag_agent's zero-retrieval canned reply
+                # (_NO_CONTEXT_REPLY in rag_chain.py) - so no on_chat_model_stream event
+                # ever fires for them. Not restricted to a specific node name: any node's
+                # own on_chain_end output carrying a non-empty final_answer means this is
+                # one of those no-LLM-call paths, caught here as a single chunk instead.
+                elif kind == "on_chain_end" and not got_tokens:
+                    node_output = event["data"].get("output")
+                    canned_answer = (
+                        node_output.get("final_answer", "")
+                        if isinstance(node_output, dict)
+                        else ""
                     )
-                    if refusal:
+                    if canned_answer:
+                        got_tokens = True
+                        full_answer = canned_answer
                         yield chat_completion_chunk(
                             completion_id,
                             created_at,
                             request.model,
-                            {"content": refusal},
+                            {"content": canned_answer},
                         )
 
             elapsed_ms = (time.monotonic() - start) * 1000
