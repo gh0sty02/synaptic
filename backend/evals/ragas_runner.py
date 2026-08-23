@@ -30,6 +30,7 @@ from ingestion.stackoverflow_data_builder import (
 from ingestion.stackoverflow_loader import CONN_STR
 from llm import judge_llm
 from retrieval.chunks_retriever import ChunksRetriever
+from retrieval.reranker import RERANK_SCORE_CUTOFF
 
 REPORT_DIR = Path(__file__).resolve().parents[2] / "experiments"
 
@@ -37,24 +38,25 @@ REPORT_DIR = Path(__file__).resolve().parents[2] / "experiments"
 async def _run_pipeline(
     rag_chain: Runnable[_RagPipelineState, _RagPipelineState],
     questions: list[dict[str, str]],
+    concurrency: int,
 ) -> list[dict[str, str | list[str]]]:
-    rows: list[dict[str, str | list[str]]] = []
+    semaphore = asyncio.Semaphore(concurrency)
 
-    for q in questions:
-        result = await rag_chain.ainvoke({"question": q["title"], "memory_context": ""})
+    async def _run_one(q: dict[str, str]) -> dict[str, str | list[str]]:
+        async with semaphore:
+            result = await rag_chain.ainvoke(
+                {"question": q["title"], "memory_context": ""}
+            )
+        return {
+            "user_input": q["title"],
+            "response": result.get("answer", ""),
+            "retrieved_contexts": [
+                doc.page_content for doc in result.get("source_documents", [])
+            ],
+            "reference": q["answer"],
+        }
 
-        rows.append(
-            {
-                "user_input": q["title"],
-                "response": result.get("answer", ""),
-                "retrieved_contexts": [
-                    doc.page_content for doc in result.get("source_documents", [])
-                ],
-                "reference": q["answer"],
-            }
-        )
-
-    return rows
+    return list(await asyncio.gather(*(_run_one(q) for q in questions)))
 
 
 """
@@ -69,7 +71,28 @@ def _get_commit_hash() -> str:
     ).strip()
 
 
-async def main(sample_size: int, dense_only: bool) -> None:
+_METRIC_SETS = {
+    "all": [
+        Faithfulness(),
+        AnswerRelevancy(),
+        LLMContextPrecisionWithoutReference(),
+        LLMContextRecall(),
+        AnswerCorrectness(),
+    ],
+    # Retrieval-quality only. Faithfulness/AnswerRelevancy/AnswerCorrectness judge the
+    # generated answer, not what the reranker cutoff actually affects (which chunks make
+    # it into context) -- irrelevant to a cutoff sweep and the most expensive metrics
+    # (multi-step claim decomposition), so skipping them cuts sweep time substantially.
+    "context": [
+        LLMContextPrecisionWithoutReference(),
+        LLMContextRecall(),
+    ],
+}
+
+
+async def main(
+    sample_size: int, dense_only: bool, metrics: str, workers: int, pipeline_concurrency: int
+) -> None:
     builder = SODatasetBuilder(DATA_PATH, EVAL_IDS_PATH)
     questions = builder.eval_holdout_questions(STACKEXCHANGE_DIR)[:sample_size]
 
@@ -81,22 +104,18 @@ async def main(sample_size: int, dense_only: bool) -> None:
         )
     rag_chain = rag_chain_builder.build()
 
-    rows = await _run_pipeline(rag_chain=rag_chain, questions=questions)
+    rows = await _run_pipeline(
+        rag_chain=rag_chain, questions=questions, concurrency=pipeline_concurrency
+    )
 
     dataset = Dataset.from_list(rows)
 
     result = evaluate(
         dataset,
-        metrics=[
-            Faithfulness(),
-            AnswerRelevancy(),
-            LLMContextPrecisionWithoutReference(),
-            LLMContextRecall(),
-            AnswerCorrectness(),
-        ],
+        metrics=_METRIC_SETS[metrics],
         llm=LangchainLLMWrapper(judge_llm),
         embeddings=embeddings,
-        run_config=RunConfig(max_workers=2, timeout=300),
+        run_config=RunConfig(max_workers=workers, timeout=300),
     )
 
     REPORT_DIR.mkdir(exist_ok=True)
@@ -111,6 +130,8 @@ async def main(sample_size: int, dense_only: bool) -> None:
                 "commit": _get_commit_hash(),
                 "sample_size": sample_size,
                 "hybrid_search_enabled": "false" if dense_only else "true",
+                "rerank_score_cutoff": RERANK_SCORE_CUTOFF,
+                "metrics": metrics,
                 "scores": result.to_pandas().mean(numeric_only=True).to_dict(),
             },
             indent=2,
@@ -132,5 +153,35 @@ if __name__ == "__main__":
         action="store_true",
         help="Bypass hybrid retrieval, use ChunksRetriever directly (dense-vs-hybrid comparison)",
     )
+    parser.add_argument(
+        "--metrics",
+        choices=list(_METRIC_SETS),
+        default="all",
+        help="'all' (default, original 5 metrics) or 'context' (LLMContextPrecisionWithoutReference "
+        "+ LLMContextRecall only -- the two metrics a RERANK_SCORE_CUTOFF sweep actually needs, "
+        "and far cheaper since it skips Faithfulness/AnswerCorrectness's multi-step claim checks)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="RAGAS RunConfig max_workers (concurrent judge_llm calls during metric scoring). "
+        "Default 2 matches prior behavior; raise cautiously and watch for rate-limit errors.",
+    )
+    parser.add_argument(
+        "--pipeline-concurrency",
+        type=int,
+        default=5,
+        help="Concurrent RagChain.ainvoke calls when building the eval dataset (was fully "
+        "sequential before). Bounded by a semaphore, not by RAGAS's own worker count.",
+    )
     args = parser.parse_args()
-    asyncio.run(main(args.sample_size, args.dense_only))
+    asyncio.run(
+        main(
+            args.sample_size,
+            args.dense_only,
+            args.metrics,
+            args.workers,
+            args.pipeline_concurrency,
+        )
+    )
