@@ -1,4 +1,3 @@
-import asyncio
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -9,6 +8,7 @@ from constants import BEHAVIORAL_GUARDRAILS
 from context.engineer import assemble
 from llm import main_llm
 from memory.manager import MemoryManager
+from retrieval.query_condensation import condense_query
 
 from . import rag_agent as _rag_agent
 from .rag_agent import extract_citations
@@ -21,6 +21,9 @@ You have been given:
 
 Combine both sources to produce a single, coherent, grounded answer.
 If conversation history contradicts the documents, prefer the documents but acknowledge the discrepancy.
+Only cite a document with [Source: <title>] when that document actually supports the claim. If you must
+answer from conversation history or general knowledge instead of a retrieved document, say so explicitly
+rather than attaching a citation to it.
 """ + BEHAVIORAL_GUARDRAILS
 
 memory_manager: MemoryManager | None = None
@@ -35,7 +38,11 @@ class Orchestrator:
         long_term: str,
         callbacks: list | None = None,
     ) -> str:
-        context = f"Retrieved documents:\n{docs_context}"
+        context = (
+            f"Retrieved documents:\n{docs_context}"
+            if docs_context.strip()
+            else "Retrieved documents: none found for this question."
+        )
         if short_term:
             context += f"\n\nRecent conversation:\n{short_term}"
         if long_term:
@@ -57,17 +64,26 @@ _orchestrator = Orchestrator()
 @observe(name="orchestrator_node")
 async def orchestrator_node(state: SynapticState) -> dict[str, Any]:
     """
-    For multi-intent queries: loads memory and retrieves chunks in parallel,
-    then calls the LLM to merge both into a single coherent final answer.
+    For multi-intent queries: loads memory, condenses the query against it to
+    resolve referential follow-ups, retrieves chunks with the condensed query,
+    then calls the LLM to merge memory and retrieval into one final answer.
     """
     assert memory_manager is not None, "memory_manager not initialised"
 
     langfuse = get_client()
 
-    memory_result, docs = await asyncio.gather(
-        memory_manager.load(session_id=state["session_id"], query=state["query"]),
-        _rag_agent.retriever.ainvoke(state["query"]),
+    memory_result = await memory_manager.load(
+        session_id=state["session_id"], query=state["query"]
     )
+
+    pre_bundle = assemble(
+        "orchestrator_node",
+        short_term_memory=memory_result.get("short_term_memory", []),
+        long_term_memory=memory_result.get("long_term_memory", []),
+    )
+    retrieval_query = await condense_query(state["query"], pre_bundle.memory_context)
+
+    docs = await _rag_agent.retriever.ainvoke(retrieval_query)
 
     bundle = assemble(
         "orchestrator_node",
@@ -78,6 +94,7 @@ async def orchestrator_node(state: SynapticState) -> dict[str, Any]:
 
     langfuse.update_current_span(
         metadata={
+            "retrieval_query": retrieval_query,
             "budget_decision": bundle.decision,
             "token_count": bundle.token_count,
             "budget_exceeded": state.get("budget_exceeded"),
