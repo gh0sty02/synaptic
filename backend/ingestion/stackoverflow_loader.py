@@ -12,6 +12,7 @@ from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from tqdm import tqdm
 
+
 from ingestion.stackoverflow_data_builder import (
     DATA_PATH,
     EVAL_IDS_PATH,
@@ -20,6 +21,7 @@ from ingestion.stackoverflow_data_builder import (
     DocumentMetadata,
     SODatasetBuilder,
 )
+from retrieval.tokenize import tokenize
 
 load_dotenv(override=True)
 
@@ -68,6 +70,7 @@ class IngestionPipeline:
         "chunk_index",
         "content",
         "content_hash",
+        "content_pretokenized",
         "embedding",
         "embedding_model",
         "embedding_version",
@@ -81,7 +84,7 @@ class IngestionPipeline:
         rebuild_index_threshold: int = REBUILD_INDEX_THRESHOLD,
         chunk_size: int = 5000,
     ) -> None:
-        self.conn_str = conn_str.replace("postgresql+psycopg://", "postgresql://", 1)
+        self.conn_str = conn_str
         self.embedding_model = embedding_model
         self.embedding_version = embedding_version
         self.rebuild_index_threshold = rebuild_index_threshold
@@ -314,7 +317,9 @@ class IngestionPipeline:
             clean_metadatas.append(meta)
 
         if invalid_doc_ids:
-            log.warning("Dropped %d documents with invalid embeddings", len(invalid_doc_ids))
+            log.warning(
+                "Dropped %d documents with invalid embeddings", len(invalid_doc_ids)
+            )
 
         return clean_texts, clean_vectors, clean_metadatas, invalid_doc_ids
 
@@ -343,7 +348,7 @@ class IngestionPipeline:
                     batch_slice = slice(start, start + self.chunk_size)
                     with cur.copy(
                         "COPY chunks (document_id, chunk_index, content, content_hash, "
-                        "embedding, embedding_model, embedding_version) FROM STDIN"
+                        "content_pretokenized, embedding, embedding_model, embedding_version) FROM STDIN"
                     ) as copy:
                         for text, vector, meta in zip(
                             texts[batch_slice],
@@ -357,6 +362,7 @@ class IngestionPipeline:
                                     0,
                                     text,
                                     meta["content_hash"],
+                                    " ".join(tokenize(text)),
                                     str(vector),
                                     self.embedding_model,
                                     self.embedding_version,

@@ -33,12 +33,14 @@ from ingestion.stackoverflow_data_builder import (
     STACKEXCHANGE_DIR,
     SODatasetBuilder,
 )
+from guardrails.classifier import OUTPUT_CHECK_WINDOW_CHARS, guardrail_classifier
 from ingestion.stackoverflow_loader import CONN_STR, EMBEDDING_MODEL, IngestionPipeline
 from llm import utility_llm
+from retrieval import reranker
 from memory.long_term import LongTermMemory
 from memory.manager import MemoryManager
 from memory.short_term import ShortTermMemory
-from retrieval.bm25_retriever import BM25Retriever
+from retrieval.fulltext_retriever import FullTextRetriever
 
 logger = logging.getLogger(__name__)
 app_graph = None
@@ -93,18 +95,15 @@ async def lifespan(application: FastAPI):
     global app_graph, memory_manager
 
     redis_client = aioredis.from_url(REDIS_URL)
-    db_url = CONN_STR.replace("postgresql+psycopg2://", "postgresql://").replace(
-        "postgresql+psycopg://", "postgresql://"
-    )
+    db_url = CONN_STR
     db_pool = await asyncpg.create_pool(db_url)
 
     _embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     rag_agent_module.init(_embeddings)
 
-    # Build the BM25 index eagerly at startup instead of on the first query -
-    # _bm25/_corpus are ClassVar, shared by every BM25Retriever instance, so this
-    # warms the same cache the hybrid retriever's sparse retriever reads from.
-    BM25Retriever(conn_str=CONN_STR)._load_index()
+    # Loads the CrossEncoder weights immediately instead of on the first rerank()
+    # call, so the first real query doesn't pay the model-load latency.
+    reranker.preload()
 
     async def embed_fn(text: str) -> list[float]:
         loop = asyncio.get_event_loop()
@@ -252,6 +251,10 @@ async def chat_completions(request: ChatCompletionRequest):
 
     async def generate():
         start = time.monotonic()
+        got_tokens = False
+        checked_up_to = 0
+        full_answer = ""
+
         try:
             # Role announcement — required by OpenAI SDK before any content
             yield chat_completion_chunk(
@@ -261,19 +264,79 @@ async def chat_completions(request: ChatCompletionRequest):
                 {"role": "assistant", "content": ""},
             )
 
-            result = await app_graph.ainvoke(initial_state, config=config)
+            async for event in app_graph.astream_events(
+                initial_state, config=config, version="v2"
+            ):
+                kind = event["event"]
+
+                if kind == "on_chat_model_stream" and "final_answer" in event.get(
+                    "tags", []
+                ):
+                    delta = event["data"]["chunk"].content
+
+                    if delta:
+                        got_tokens = True
+                        full_answer += delta
+                        yield chat_completion_chunk(
+                            completion_id, created_at, request.model, {"content": delta}
+                        )
+
+                        if (
+                            len(full_answer) - checked_up_to
+                            >= OUTPUT_CHECK_WINDOW_CHARS
+                        ):
+                            checked_up_to = len(full_answer)
+                            verdict = await guardrail_classifier.check_output(
+                                full_answer, config={"callbacks": [langfuse_handler]}
+                            )
+
+                            if verdict.blocked:
+                                yield chat_completion_chunk(
+                                    completion_id,
+                                    created_at,
+                                    request.model,
+                                    {
+                                        "content": "\n\n[Response retracted : policy violation detected]"
+                                    },
+                                )
+
+                                yield chat_completion_chunk(
+                                    completion_id,
+                                    created_at,
+                                    request.model,
+                                    {},
+                                    finish_reason="content_filter",
+                                )
+
+                                yield stream_done()
+                                return
+
+                # Some nodes set final_answer without ever calling an LLM - blocked_node's
+                # static refusal, and rag_agent's zero-retrieval canned reply
+                # (_NO_CONTEXT_REPLY in rag_chain.py) - so no on_chat_model_stream event
+                # ever fires for them. Not restricted to a specific node name: any node's
+                # own on_chain_end output carrying a non-empty final_answer means this is
+                # one of those no-LLM-call paths, caught here as a single chunk instead.
+                elif kind == "on_chain_end" and not got_tokens:
+                    node_output = event["data"].get("output")
+                    canned_answer = (
+                        node_output.get("final_answer", "")
+                        if isinstance(node_output, dict)
+                        else ""
+                    )
+                    if canned_answer:
+                        got_tokens = True
+                        full_answer = canned_answer
+                        yield chat_completion_chunk(
+                            completion_id,
+                            created_at,
+                            request.model,
+                            {"content": canned_answer},
+                        )
+
             elapsed_ms = (time.monotonic() - start) * 1000
             _metrics["total_queries"] += 1
             _metrics["_latency_sum_ms"] += elapsed_ms
-            answer = result.get("final_answer", "")
-
-            if answer:
-                yield chat_completion_chunk(
-                    completion_id,
-                    created_at,
-                    request.model,
-                    {"content": answer},
-                )
 
             yield chat_completion_chunk(
                 completion_id,

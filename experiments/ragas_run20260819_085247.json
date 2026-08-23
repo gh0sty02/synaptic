@@ -1,0 +1,11 @@
+{
+  "commit": "ea21d35",
+  "sample_size": 50,
+  "hybrid_search_enabled": "true",
+  "rerank_score_cutoff": 1.5,
+  "metrics": "context",
+  "scores": {
+    "llm_context_precision_without_reference": 0.5295138888417533,
+    "context_recall": 0.2274569402228977
+  }
+}

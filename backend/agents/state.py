@@ -40,6 +40,9 @@ class SynapticState(TypedDict):
     citations: list[dict[str, Any]]
     agent_scratchpad: str
 
+    # Guardrail - set by guardrail_node, ready by route_after_guardrail and blocked_node
+    guardrail_verdict: dict[str, Any] | None
+
     # Observability
     trace_id: str
     latency_ms: dict[str, int]

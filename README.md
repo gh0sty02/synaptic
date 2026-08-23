@@ -54,7 +54,7 @@ All agents call the same model through one OpenAI-compatible endpoint (`LLM_MODE
 | Vector DB           | pgvector on PostgreSQL (HNSW index, cosine similarity)                         |
 | Dense retrieval     | pgvector cosine search (`retrieval/chunks_retriever.py`)                       |
 | Sparse retrieval    | rank-bm25, in-memory, rebuilt on app startup (`retrieval/bm25_retriever.py`)   |
-| Hybrid fusion       | Reciprocal Rank Fusion, dense + BM25 (`retrieval/hybrid.py`)                   |
+| Hybrid fusion       | Dense + BM25 candidate union, cross-encoder reranked (`retrieval/hybrid.py`)   |
 | Query expansion     | HyDE — hypothetical document embedding (`retrieval/hyde.py`), gated by `use_hyde` |
 | Reranker            | cross-encoder/ms-marco-MiniLM-L-6-v2 (sentence-transformers)                   |
 | Context engineering | Per-agent token budgets + LLMLingua compression on overflow (`context/engineer.py`, `context/optimiser.py`) |
@@ -202,7 +202,7 @@ synaptic/
 │   ├── chain/                    # RAG chain (condensation → HyDE → retrieve → generate)
 │   ├── context/                  # Per-agent token budgets + LLMLingua compression
 │   ├── memory/                   # Short-term (Redis) + long-term (pgvector)
-│   ├── retrieval/                # Dense, BM25, hybrid (RRF), reranker, HyDE
+│   ├── retrieval/                # Dense, BM25, hybrid fusion, cross-encoder reranker, HyDE
 │   ├── ingestion/                # Kaggle + StackExchange adapters, shared dataset builder
 │   ├── evals/                    # RAGAS eval runner
 │   └── db/                       # schema.sql
@@ -237,13 +237,19 @@ synaptic/
 
 ## Eval Results
 
-| Configuration                 | Context Precision | Context Recall | Faithfulness | Answer Relevancy |
-| ----------------------------- | ----------------- | --------------- | ------------ | ---------------- |
-| Dense-only baseline           | —                  | —               | —            | —                 |
-| + Hybrid search (BM25 + RRF)  | —                  | —               | —            | —                 |
-| + HyDE                        | —                  | —               | —            | —                 |
+| Configuration            | Context Precision | Context Recall | Faithfulness | Answer Relevancy | Answer Correctness |
+| ------------------------ | ------------------ | --------------- | ------------ | ----------------- | ------------------- |
+| Dense-only                | 0.542               | 0.171            | 0.658         | 0.585              | 0.258                |
+| + Hybrid search (BM25)    | 0.617               | 0.288            | 0.747         | 0.555              | 0.270                |
+| + HyDE                    | —                   | —                | —             | —                  | —                    |
 
-_The RAGAS runner exists (`backend/evals/ragas_runner.py`); results are populated once the reference-based metrics (Phase 3.1) and a committed baseline (Phase 7) land._
+Dense-only vs hybrid: same 20 held-out questions, same judge model. `n=20`,
+single run each, not yet averaged over repeats — directionally reliable (recall gain exceeds
+measured run-to-run noise) but not a tight confidence interval. Provisional, still in
+development. HyDE not yet measured.
+
+_The RAGAS runner exists (`backend/evals/ragas_runner.py`, `--dense-only` flag for
+retriever-ablation runs)._
 
 ---
 

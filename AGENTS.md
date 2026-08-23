@@ -6,6 +6,53 @@ This file is the primary source of procedural knowledge for agents working on th
 
 Default to explaining and discussing — derivations, tradeoffs, "why" behind existing code, concept clarification. Do **not** implement, edit, or refactor code unless the user explicitly asks for the change. If a clarifying question surfaces something that looks like it should change, say so and ask before editing rather than editing and then summarizing.
 
+## Living Engineering Records
+
+[`decisions.md`](decisions.md) and [`flow.md`](flow.md) are mandatory living engineering records.
+Read both before planning or implementing any phase, feature, migration, architectural change, or cross-module refactor.
+
+`decisions.md` records meaningful choices, alternatives, rationale, accepted tradeoffs, consequences, evidence, and status.
+Use it as the chronological working log.
+Continue to create an ADR for an architectural decision that is difficult to reverse or affects multiple phases.
+
+`flow.md` records implemented execution at file and function level, graph branches, state movement, failure paths, Mermaid diagrams, and the exact path affected by active work.
+Treat present code as authoritative when phase prose, commit wording, and runtime behavior disagree.
+
+### Mandatory Update Triggers
+
+Every agent must update these records at the following points:
+
+1. When a phase is created, add proposed decisions and the planned execution path without presenting them as implemented.
+2. Before phase implementation begins, replace the active-change section with the exact planned files, functions, modules, state fields, and boundaries.
+3. At each meaningful implementation milestone, reconcile the decisions and active path with the code that now exists.
+4. Before continuing after implementation diverges from the plan, record the divergence, its reason, and its tradeoff.
+5. At phase completion, trace the code again, record actual rather than planned flow, finalize decision statuses, and prompt the user to review both files.
+
+Agents must proactively tell the user when a record update or review is due.
+Do not wait for the user to remember this process.
+Do not add an unimplemented phase to the implemented phase ledger.
+
+### Mental-Model Comprehension Gate
+
+Phase work is always a substantial change.
+A feature, migration, architectural change, protocol change, storage change, or cross-module refactor is also substantial.
+
+Before modifying implementation code for a substantial change:
+
+1. Explain the proposed mental model, including execution order, file and function ownership, state movement, dependencies, failure behavior, and accepted tradeoffs.
+2. Show a Mermaid diagram when control flow, data flow, state transitions, or three or more interacting components are involved.
+3. Quiz the user with three to five questions that test the key concepts rather than trivia.
+4. If an answer is incomplete or incorrect, explain the missed concept and re-quiz it.
+5. Continue the teaching loop until the key answers are correct.
+6. Ask the user to confirm readiness after the answers are correct.
+7. Begin implementation only after correct answers and explicit readiness confirmation.
+
+This is a hard gate and a teaching loop.
+Design approval alone does not satisfy it.
+
+Small isolated bug fixes and documentation-only edits are exempt unless they change architecture, a cross-module boundary, or phase scope.
+When uncertain, treat the change as substantial and ask before editing code.
+
 ---
 
 ## Skill Routing
@@ -292,12 +339,12 @@ Swap models without code changes: set `LLM_MODEL` to a larger variant (e.g. `uns
 
 The build is structured in phases documented in [docs/](docs/):
 
-| Phase | Doc                                                                         | Focus                                                |
-| ----- | --------------------------------------------------------------------------- | ---------------------------------------------------- |
-| 1     | [phase-1-foundation.md](docs/phase-1-foundation.md)                         | FastAPI + pgvector + ingestion + basic RAG           |
-| 1.2   | [phase-1.2-retrieval-quality.md](docs/phase-1.2-retrieval-quality.md)       | Hybrid search, reranker, HyDE                        |
-| 2     | [phase-2-agents-memory.md](docs/phase-2-agents-memory.md)                   | LangGraph graph, memory system, triage               |
-| 3     | [phase-3-context-rag.md](docs/phase-3-context-rag.md)                       | Context engineer, token budget, compression          |
-| 3.2   | [phase-3.2-conversation-history.md](docs/phase-3.2-conversation-history.md) | Listable, persistent conversation history per client |
-| 4     | [phase-4-guardrails-routing.md](docs/phase-4-guardrails-routing.md)         | Guardrail classifier, advanced routing               |
-| 5     | [phase-5-observability-polish.md](docs/phase-5-observability-polish.md)     | Langfuse, RAGAS evals, streaming polish              |
+| Phase | Doc                                              | Focus                                                |
+| ----- | ------------------------------------------------ | ---------------------------------------------------- |
+| 1     | [Phase 1](docs/phase-1/README.md)                | FastAPI + pgvector + ingestion + basic RAG           |
+| 1.2   | [Phase 1.2](docs/phase-1.2/README.md)            | Hybrid search, reranker, HyDE                        |
+| 2     | [Phase 2](docs/phase-2/README.md)                | LangGraph graph, memory system, triage               |
+| 3     | [Phase 3](docs/phase-3/README.md)                | Context engineer, token budget, compression          |
+| 3.2   | [Phase 3.2](docs/phase-3.2/README.md)            | Listable, persistent conversation history per client |
+| 4     | [Phase 4](docs/phase-4/README.md)                | Guardrail classifier, advanced routing               |
+| 5     | [Phase 5](docs/phase-5/README.md)                | Langfuse, RAGAS evals, streaming polish              |

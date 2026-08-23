@@ -15,6 +15,10 @@ def _get_encoder() -> CrossEncoder:
     return _encoder
 
 
+def preload() -> None:
+    _get_encoder()
+
+
 def rerank(query: str, docs: list[Document], top_k: int) -> list[Document]:
 
     if not docs:
